@@ -1,12 +1,13 @@
 from collections.abc import Sequence
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -45,6 +46,37 @@ EQUAL_SPLIT = 100_000
 Snapshot = tuple[str, tuple[str, ...], str, str]
 
 
+class DeckComboBox(QComboBox):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        line_edit = self.lineEdit()
+        if line_edit is not None:
+            line_edit.setPlaceholderText("Deck")
+            line_edit.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (
+            watched is self.lineEdit()
+            and event.type() == QEvent.Type.MouseButtonRelease
+            and not self.view().isVisible()
+            and self.count()
+        ):
+            self.showPopup()
+        return super().eventFilter(watched, event)
+
+    def remember(self, deck_name: str) -> None:
+        if deck_name and self.findText(deck_name, Qt.MatchFlag.MatchFixedString) < 0:
+            current = self.currentText()
+            names = sorted({self.itemText(index) for index in range(self.count())} | {deck_name})
+            was_blocked = self.blockSignals(True)
+            self.clear()
+            self.addItems(names)
+            self.setCurrentText(current)
+            self.blockSignals(was_blocked)
+
+
 class CapturePage(QWidget):
     save_state_changed = Signal()
 
@@ -71,13 +103,9 @@ class CapturePage(QWidget):
         self.restoring = False
         self.theme = DEFAULT_THEME
 
-        self.deck_combo = QComboBox()
-        self.deck_combo.setEditable(True)
-        self.deck_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.deck_combo = DeckComboBox()
         self.deck_combo.setMinimumWidth(240)
-        deck_line_edit = self.deck_combo.lineEdit()
-        if deck_line_edit is not None:
-            deck_line_edit.setPlaceholderText("Deck")
+        self.deck_combo.remember(DEFAULT_DECK)
         self.template_combo = QComboBox()
         self.template_combo.setMinimumWidth(160)
         self.fill_template_combo()
@@ -92,6 +120,9 @@ class CapturePage(QWidget):
         self.diagnostics_list.setMaximumHeight(110)
         self.diagnostics_list.setVisible(False)
         self.preview = CardPreview()
+        self.save_new_button = QPushButton("Save && new")
+        self.save_new_button.setObjectName("primary")
+        self.save_new_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         self.build_layout()
 
@@ -109,6 +140,7 @@ class CapturePage(QWidget):
         self.template_combo.activated.connect(self.on_template_chosen)
         self.diagnostics_list.itemActivated.connect(self.on_diagnostic_activated)
         self.diagnostics_list.itemClicked.connect(self.on_diagnostic_activated)
+        self.save_new_button.clicked.connect(lambda: self.new_card())
         save_queue.saved.connect(self.on_saved)
 
     def build_layout(self) -> None:
@@ -126,6 +158,10 @@ class CapturePage(QWidget):
         editors_layout.addWidget(self.front_editor, 1)
         editors_layout.addWidget(self.back_editor, 1)
         editors_layout.addWidget(self.diagnostics_list)
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        actions.addWidget(self.save_new_button)
+        editors_layout.addLayout(actions)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(16)
@@ -297,6 +333,7 @@ class CapturePage(QWidget):
     def on_saved(self, source_id: str, result: SaveResult) -> None:
         if source_id == self.source_id:
             self.note_id = result.note_id
+        self.deck_combo.remember(self.deck_name())
         self.tags_edit.add_known_tags(parse_tags(self.tags_edit.text()))
 
     def save_draft(self) -> None:

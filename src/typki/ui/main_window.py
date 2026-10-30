@@ -160,6 +160,10 @@ class MainWindow(QMainWindow):
                 self.menu.addAction(action)
             self.addAction(action)
             reserved.add(sequence)
+            if shortcut_action.key == "new_card":
+                self.capture.save_new_button.setToolTip(
+                    sequence.toString(QKeySequence.SequenceFormat.NativeText)
+                )
         for editor in (self.capture.front_editor, self.capture.back_editor, self.global_page.header_editor):
             editor.reserved_shortcuts = reserved
         self.menu.addSeparator()

@@ -519,6 +519,10 @@ QPushButton {{
   background: {theme.raised}; color: {theme.text}; border: none; border-radius: 8px; padding: 7px 16px;
 }}
 QPushButton:hover {{ background: {theme.border}; }}
+QPushButton#primary {{
+  background: {theme.accent}; color: {theme.chrome}; font-weight: 600; padding: 8px 20px;
+}}
+QPushButton#primary:hover {{ background: {theme.text}; }}
 QPushButton:flat {{ background: transparent; color: {theme.muted}; padding: 7px 0; }}
 QPushButton:flat:hover {{ color: {theme.text}; }}
 QToolButton {{

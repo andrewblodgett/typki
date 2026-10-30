@@ -174,6 +174,30 @@ def test_new_card_shortcut_saves_immediately_and_resets(
     qtbot.waitUntil(lambda: len(note_with_front(fake, "quick card")) == 1, timeout=WAIT_MS)
 
 
+def test_save_and_new_button_saves_and_resets(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    _, fake = fake_ankiconnect
+    capture = window.capture
+    type_card(window, "Real Analysis", "button card", "answer")
+    qtbot.waitUntil(lambda: capture.last_render_ok, timeout=WAIT_MS)
+    first_source = capture.source_id
+    qtbot.mouseClick(capture.save_new_button, Qt.MouseButton.LeftButton)
+    assert capture.source_id != first_source
+    assert capture.front_editor.toPlainText() == ""
+    assert capture.save_new_button.toolTip()
+    qtbot.waitUntil(lambda: len(note_with_front(fake, "button card")) == 1, timeout=WAIT_MS)
+
+
+def test_clicking_deck_field_opens_deck_list(qtbot: QtBot, window: MainWindow) -> None:
+    capture = window.capture
+    capture.set_deck_names(["Default", "Physics"])
+    qtbot.mouseClick(capture.deck_combo.lineEdit(), Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(capture.deck_combo.view().isVisible, timeout=WAIT_MS)
+    assert capture.deck_combo.findText("Physics") >= 0
+    capture.deck_combo.hidePopup()
+
+
 def test_open_from_browse_and_edit_in_place(
     qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
 ) -> None:
