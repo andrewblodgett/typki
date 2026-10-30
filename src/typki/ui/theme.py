@@ -509,9 +509,11 @@ QListWidget#cards::item:hover {{ background: {theme.raised}; border-color: {them
 QListWidget#cards::item:selected {{
   background: {theme.raised}; border-color: {theme.accent}; color: {theme.text};
 }}
-QListWidget#diagnostics {{ background: transparent; border: none; padding: 4px 0 0 0; }}
-QListWidget#diagnostics::item {{ padding: 3px 6px; border-radius: 6px; }}
-QListWidget#diagnostics::item:selected, QListWidget#diagnostics::item:hover {{ background: {theme.raised}; }}
+QLabel#caption {{ color: {theme.muted}; font-weight: 600; padding-left: 2px; }}
+QLabel#message {{ color: {theme.muted}; padding: 0 2px; }}
+QLabel#save-status {{ color: {theme.muted}; padding: 0 8px; }}
+QLabel#message[level="error"], QLabel#save-status[level="error"] {{ color: {theme.error}; }}
+QLabel#message[level="warning"] {{ color: {theme.warning}; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 4px 2px; }}
 QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px 4px; }}
 QScrollBar::handle {{ background: {theme.border}; border-radius: 3px; }}

@@ -6,11 +6,11 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QToolButton, QVBoxLayout, QWidget
 
 from typki.anki.note_type import CARD_CSS
-from typki.ui.layout import filled, row
+from typki.ui.layout import caption_row, filled
 from typki.ui.theme import DEFAULT_THEME, Theme
 
 PHONE_WIDTH_PX = 360
-CONTROLS_GAP = 10
+CAPTION_GAP = 4
 
 PREVIEW_PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><style>
@@ -59,7 +59,11 @@ class CardPreview(QWidget):
         self.pending_scripts: list[str] = []
         self.theme = DEFAULT_THEME
 
-        filled(QVBoxLayout(self), [row(1, self.phone_toggle), (self.view, 1)], spacing=CONTROLS_GAP)
+        filled(
+            QVBoxLayout(self),
+            [caption_row("Preview", self.phone_toggle), (self.view, 1)],
+            spacing=CAPTION_GAP,
+        )
 
         self.phone_toggle.toggled.connect(self.apply_phone)
         self.view.loadFinished.connect(self.on_loaded)

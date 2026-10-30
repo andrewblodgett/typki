@@ -2,7 +2,7 @@ from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
-from PySide6.QtWidgets import QComboBox, QPushButton, QWidget
+from PySide6.QtWidgets import QComboBox, QLabel, QPushButton, QWidget
 
 from typki.card_service import CardRender, CardService, SaveResult
 from typki.domain.card import CardDraft, StoredCard, missing_content, new_source_id, parse_tags
@@ -16,20 +16,21 @@ from typki.domain.template import (
     templates_from_header,
 )
 from typki.library.drafts import DraftStore
-from typki.render.diagnostics import Diagnostic
 from typki.ui.background import CoalescingTask, TaskRunner, debouncer
-from typki.ui.diagnostics_list import DiagnosticsList
 from typki.ui.editor import TypstEditor
-from typki.ui.layout import panel, row, split_page
+from typki.ui.editor_field import EditorField
+from typki.ui.layout import page, panel, row, splitter
 from typki.ui.preview import CardPreview
-from typki.ui.save_queue import SaveQueue
+from typki.ui.save_queue import NOT_SAVED, SaveQueue
 from typki.ui.tags_edit import TagsEdit
 from typki.ui.theme import Theme
 
 RENDER_DEBOUNCE_MS = 60
 AUTOSAVE_DEBOUNCE_MS = 400
 DRAFT_SAVE_DEBOUNCE_MS = 400
-DIAGNOSTICS_HEIGHT = 110
+DECK_WIDTH = 220
+TEMPLATE_WIDTH = 160
+SAVE_STATUS_WIDTH = 260
 DEFAULT_DECK = "Default"
 FRONT = "front"
 BACK = "back"
@@ -72,7 +73,6 @@ class DeckComboBox(QComboBox):
 
 class CapturePage(QWidget):
     save_state_changed = Signal()
-    notice = Signal(str)
 
     def __init__(
         self,
@@ -95,34 +95,36 @@ class CapturePage(QWidget):
         self.restoring = False
 
         self.deck_combo = DeckComboBox()
-        self.deck_combo.setMinimumWidth(240)
+        self.deck_combo.setMinimumWidth(DECK_WIDTH)
         self.deck_combo.set_names([DEFAULT_DECK])
         self.template_combo = QComboBox()
-        self.template_combo.setMinimumWidth(160)
+        self.template_combo.setMinimumWidth(TEMPLATE_WIDTH)
         self.fill_template_combo()
         self.tags_edit = TagsEdit()
         self.tags_edit.setPlaceholderText("Tags")
         self.front_editor = TypstEditor()
-        self.front_editor.setPlaceholderText("Front")
         self.back_editor = TypstEditor()
-        self.back_editor.setPlaceholderText("Back")
         for editor in (self.front_editor, self.back_editor):
             editor.definitions_source = lambda: self.header_text
             editor.textChanged.connect(self.on_source_changed)
-        self.diagnostics_list = DiagnosticsList(DIAGNOSTICS_HEIGHT)
+        self.front_field = EditorField("Front", self.front_editor)
+        self.back_field = EditorField("Back", self.back_editor)
         self.preview = CardPreview()
+        self.save_status_label = QLabel()
+        self.save_status_label.setObjectName("save-status")
         self.save_new_button = QPushButton("Save && new")
         self.save_new_button.setObjectName("primary")
         self.save_new_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
-        editors = panel(
-            row(self.deck_combo, self.template_combo, (self.tags_edit, 1)),
-            (self.front_editor, 1),
-            (self.back_editor, 1),
-            self.diagnostics_list,
-            row(1, self.save_new_button),
+        toolbar = row(
+            self.deck_combo,
+            self.template_combo,
+            (self.tags_edit, 1),
+            self.save_status_label,
+            self.save_new_button,
         )
-        split_page(self, editors, self.preview)
+        editors = panel((self.front_field, 1), (self.back_field, 1), spacing=0)
+        page(self, toolbar, (splitter(editors, self.preview), 1))
 
         self.render_task = CoalescingTask(
             render_runner, self.render_job, self.on_rendered, self.on_render_crashed
@@ -133,8 +135,9 @@ class CapturePage(QWidget):
         self.tags_edit.textChanged.connect(self.on_metadata_changed)
         self.deck_combo.currentTextChanged.connect(self.on_metadata_changed)
         self.template_combo.activated.connect(lambda _index: self.discard_card(self.template_key()))
-        self.diagnostics_list.revealed.connect(self.reveal_diagnostic)
         self.save_new_button.clicked.connect(self.new_card)
+        self.save_state_changed.connect(self.refresh_save_status)
+        save_queue.state_changed.connect(self.refresh_save_status)
         save_queue.saved.connect(self.on_saved)
 
     def fill_template_combo(self) -> None:
@@ -183,19 +186,27 @@ class CapturePage(QWidget):
         missing = missing_content(front, back)
         if missing is None or not (front.strip() or back.strip()) or self.snapshot() == self.saved_snapshot:
             return True
-        self.notice.emit(missing)
         if not front.strip() or not back.strip():
-            target = self.front_editor if not front.strip() else self.back_editor
+            field = self.front_field if not front.strip() else self.back_field
         else:
-            target = self.front_editor if PLACEHOLDER_PATTERN.search(front) else self.back_editor
-            target.select_placeholder(forward=True, from_position=0)
-        target.setFocus()
+            field = self.front_field if PLACEHOLDER_PATTERN.search(front) else self.back_field
+            field.editor.select_placeholder(forward=True, from_position=0)
+        field.show_problem(missing)
+        field.editor.setFocus()
         return False
 
     def save_status(self) -> str:
         if self.autosave_timer.isActive() or self.save_queue.is_saving(self.source_id):
             return "Saving…"
         return self.save_queue.status_by_source.get(self.source_id, "")
+
+    def refresh_save_status(self) -> None:
+        status = self.save_status()
+        label = self.save_status_label
+        label.setText(label.fontMetrics().elidedText(status, Qt.TextElideMode.ElideRight, SAVE_STATUS_WIDTH))
+        label.setToolTip(status)
+        label.setProperty("level", "error" if status.startswith(NOT_SAVED) else "")
+        label.style().polish(label)
 
     @contextmanager
     def loading_fields(self) -> Iterator[None]:
@@ -301,29 +312,16 @@ class CapturePage(QWidget):
         return lambda: self.service.render(front, back)
 
     def on_rendered(self, card_render: CardRender) -> None:
-        sides = ((FRONT, card_render.front, self.front_editor), (BACK, card_render.back, self.back_editor))
-        for side, side_render, editor in sides:
+        sides = ((FRONT, card_render.front, self.front_field), (BACK, card_render.back, self.back_field))
+        for side, side_render, field in sides:
             self.preview.set_side(side, side_render.svg, not side_render.ok)
-            editor.show_diagnostics(list(side_render.diagnostics))
-        self.show_diagnostics([(side, d) for side, side_render, _ in sides for d in side_render.diagnostics])
+            field.show_diagnostics(list(side_render.diagnostics))
         self.last_render_ok = card_render.ok
         self.schedule_autosave()
 
     def on_render_crashed(self, error: Exception) -> None:
-        self.show_diagnostics([(None, Diagnostic("error", str(error)))])
-
-    def show_diagnostics(self, lines: list[tuple[str | None, Diagnostic]]) -> None:
-        labelled = [(f"{side.capitalize()} " if side and d.in_card else "", side, d) for side, d in lines]
-        self.diagnostics_list.show_entries(
-            [(label + d.describe(), d, (side, d)) for label, side, d in labelled]
-        )
-
-    def reveal_diagnostic(self, target: tuple[str | None, Diagnostic]) -> None:
-        side, diagnostic = target
-        if diagnostic.in_card and diagnostic.line is not None:
-            editor = self.front_editor if side == FRONT else self.back_editor
-            editor.jump_to(diagnostic.line, diagnostic.column or 1)
+        self.front_field.show_problem(str(error))
 
     def set_theme(self, theme: Theme) -> None:
-        for themed in (self.front_editor, self.back_editor, self.preview, self.diagnostics_list):
+        for themed in (self.front_field, self.back_field, self.preview):
             themed.set_theme(theme)

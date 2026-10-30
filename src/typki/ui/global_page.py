@@ -5,14 +5,13 @@ from PySide6.QtWidgets import QApplication, QWidget
 from typki.card_service import CardRender, CardService
 from typki.render.diagnostics import HEADER_FILE_LABEL, Diagnostic
 from typki.ui.background import CoalescingTask, TaskRunner, debouncer
-from typki.ui.diagnostics_list import DiagnosticsList
 from typki.ui.editor import TypstEditor
-from typki.ui.layout import panel, split_page
+from typki.ui.editor_field import EditorField
+from typki.ui.layout import page, splitter
 from typki.ui.preview import CardPreview
 from typki.ui.theme import Theme
 
 WRITE_DEBOUNCE_MS = 250
-DIAGNOSTICS_HEIGHT = 100
 
 SAMPLE_FRONT = "*Define* a compact set $K subset RR$."
 SAMPLE_BACK = """$K$ is *compact* if every open cover of $K$ has a finite subcover:
@@ -34,16 +33,15 @@ class GlobalPage(QWidget):
         self.write_pending = False
 
         self.header_editor = TypstEditor()
-        self.diagnostics_list = DiagnosticsList(DIAGNOSTICS_HEIGHT)
+        self.header_field = EditorField("Header", self.header_editor)
         self.preview = CardPreview()
-        split_page(self, panel((self.header_editor, 1), self.diagnostics_list), self.preview)
+        page(self, (splitter(self.header_field, self.preview), 1))
 
         self.render_task = CoalescingTask(
             render_runner, self.render_job, self.on_rendered, self.on_render_crashed
         )
         self.write_timer = debouncer(self, WRITE_DEBOUNCE_MS, self.flush_writes)
         self.header_editor.textChanged.connect(self.on_header_edited)
-        self.diagnostics_list.revealed.connect(self.reveal_diagnostic)
         self.reload_from_disk()
 
     def set_sample(self, front: str, back: str) -> None:
@@ -97,22 +95,17 @@ class GlobalPage(QWidget):
         self.show_diagnostics(diagnostics)
 
     def on_render_crashed(self, error: Exception) -> None:
-        self.show_diagnostics([Diagnostic("error", str(error))])
+        self.header_field.show_problem(str(error))
 
     def show_diagnostics(self, diagnostics: list[Diagnostic]) -> None:
-        self.header_editor.show_diagnostics(
-            [
-                Diagnostic(d.severity, d.message, d.hints, None, d.line, d.column)
-                for d in diagnostics
-                if d.file == HEADER_FILE_LABEL
-            ]
-        )
-        self.diagnostics_list.show_entries([(d.describe(), d, d) for d in diagnostics])
-
-    def reveal_diagnostic(self, diagnostic: Diagnostic) -> None:
-        if diagnostic.file == HEADER_FILE_LABEL and diagnostic.line is not None:
-            self.header_editor.jump_to(diagnostic.line, diagnostic.column or 1)
+        header_diagnostics = [
+            Diagnostic(d.severity, d.message, d.hints, None, d.line, d.column)
+            for d in diagnostics
+            if d.file == HEADER_FILE_LABEL
+        ]
+        unplaced = [d for d in diagnostics if d.file is None and d.line is None]
+        self.header_field.show_diagnostics(header_diagnostics + unplaced)
 
     def set_theme(self, theme: Theme) -> None:
-        for themed in (self.header_editor, self.preview, self.diagnostics_list):
+        for themed in (self.header_field, self.preview):
             themed.set_theme(theme)

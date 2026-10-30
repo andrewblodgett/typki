@@ -118,8 +118,6 @@ class MainWindow(QMainWindow):
 
         self.watcher = LibraryWatcher(service.library, self)
         self.watcher.changed.connect(self.on_library_changed)
-        capture.save_state_changed.connect(self.update_indicator)
-        capture.notice.connect(self.show_notice)
         save_queue.state_changed.connect(self.update_indicator)
         save_queue.went_offline.connect(self.on_went_offline)
         self.rerender.state_changed.connect(self.update_indicator)
@@ -272,9 +270,6 @@ class MainWindow(QMainWindow):
         queued = self.save_queue.outbox.count()
         if not self.anki_connected:
             parts.append(f"Offline · {queued} queued" if queued else "Offline")
-        status = self.capture.save_status()
-        if status:
-            parts.append(status)
         if self.rerender.total:
             parts.append(f"Re-rendering {self.rerender.done}/{self.rerender.total}")
         elif self.rerender.failed:

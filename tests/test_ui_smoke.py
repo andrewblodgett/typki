@@ -1,7 +1,6 @@
 import os
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -20,7 +19,6 @@ from typki.anki.fake_anki import FakeAnki
 from typki.card_service import CardService
 from typki.domain.card import CardDraft
 from typki.library.outbox import Outbox
-from typki.render.diagnostics import Diagnostic
 from typki.ui.capture import CapturePage
 from typki.ui.editor import TypstEditor
 from typki.ui.main_window import MainWindow
@@ -91,7 +89,7 @@ def test_typing_autosaves_and_shows_saved(
     _, fake = fake_ankiconnect
     type_card(window, "Real Analysis", "*Define* a Cauchy sequence.", "$ forall epsilon > 0 $")
     qtbot.waitUntil(lambda: len(fake.notes) == 1, timeout=WAIT_MS)
-    qtbot.waitUntil(lambda: window.indicator.text() == "Saved", timeout=WAIT_MS)
+    qtbot.waitUntil(lambda: window.capture.save_status_label.text() == "Saved", timeout=WAIT_MS)
     stored = next(iter(fake.notes.values()))
     assert stored.deck_name == "Real Analysis"
     assert stored.fields[note_type.BACK_SOURCE] == "$ forall epsilon > 0 $"
@@ -120,8 +118,10 @@ def test_compile_error_is_not_saved(
 ) -> None:
     _, fake = fake_ankiconnect
     type_card(window, "Real Analysis", "fine\n$ nosuchthing(x) $", "back")
-    qtbot.waitUntil(lambda: window.capture.diagnostics_list.count() > 0, timeout=WAIT_MS)
-    assert "Front card:2:" in window.capture.diagnostics_list.item(0).text()
+    message = window.capture.front_field.message
+    qtbot.waitUntil(lambda: message.text().startswith("Line 2:"), timeout=WAIT_MS)
+    assert message.property("level") == "error"
+    assert window.capture.back_field.message.text() == ""
     qtbot.wait(800)
     assert not fake.notes
 
@@ -410,9 +410,9 @@ def test_header_error_is_listed_and_jumps_to_line(qtbot: QtBot, window: MainWind
     window.tabs.setCurrentIndex(2)
     global_page = window.global_page
     global_page.header_editor.setPlainText("#set text(size: 12pt)\n#let broken = (\n")
-    qtbot.waitUntil(lambda: global_page.diagnostics_list.count() > 0, timeout=WAIT_MS)
-    assert global_page.diagnostics_list.item(0).text().startswith("header.typ:2:")
-    global_page.diagnostics_list.itemActivated.emit(global_page.diagnostics_list.item(0))
+    message = global_page.header_field.message
+    qtbot.waitUntil(lambda: message.text().startswith("Line 2:"), timeout=WAIT_MS)
+    qtbot.mouseClick(message, Qt.MouseButton.LeftButton)
     assert global_page.header_editor.textCursor().blockNumber() == 1
 
 
@@ -608,7 +608,7 @@ def test_card_without_back_is_kept_and_never_saved(
     assert not fake.notes
     qtbot.mouseClick(capture.save_new_button, Qt.MouseButton.LeftButton)
     assert capture.front_editor.toPlainText() == "question with no answer"
-    assert "The back is empty" in window.indicator.text()
+    assert capture.back_field.message.text() == "The back is empty"
     assert capture.back_editor.hasFocus()
     capture.back_editor.setPlainText("the answer")
     qtbot.mouseClick(capture.save_new_button, Qt.MouseButton.LeftButton)
@@ -630,11 +630,11 @@ def test_save_and_new_keeps_unfilled_template_but_resets_blank_card(window: Main
     assert capture.back_editor.toPlainText() == ""
 
 
-def test_diagnostics_list_resizes_without_qt_warnings(window: MainWindow, qtlog: Any) -> None:
-    error = Diagnostic("error", "boom", (), None, 1, 1)
-    for diagnostics in (window.capture.diagnostics_list, window.global_page.diagnostics_list):
-        for entries in ([("a", error, None), ("b", error, None)], [], [("c", error, None)]):
-            diagnostics.show_entries(entries)
-            QApplication.processEvents()
-        assert diagnostics.height() > diagnostics.sizeHintForRow(0)
-    assert not [record for record in qtlog.records if "Negative sizes" in record.message]
+def test_errors_appear_under_their_side_without_moving_the_editors(qtbot: QtBot, window: MainWindow) -> None:
+    capture = window.capture
+    settle(window)
+    heights = (capture.front_editor.height(), capture.back_editor.height())
+    type_card(window, "Real Analysis", "fine", "#nosuchthing")
+    qtbot.waitUntil(lambda: capture.back_field.message.text().startswith("Line 1:"), timeout=WAIT_MS)
+    assert capture.front_field.message.text() == ""
+    assert (capture.front_editor.height(), capture.back_editor.height()) == heights

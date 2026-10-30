@@ -7,8 +7,9 @@ from typki.library.outbox import Outbox
 from typki.ui.background import TaskRunner
 
 SAVED = "Saved"
-NOT_SAVED_COMPILE = "Not saved: compile error"
-NOT_SAVED_DUPLICATE = "Not saved: duplicate front"
+NOT_SAVED = "Not saved"
+NOT_SAVED_COMPILE = f"{NOT_SAVED}: compile error"
+NOT_SAVED_DUPLICATE = f"{NOT_SAVED}: duplicate front"
 
 
 class SaveQueue(QObject):
@@ -94,6 +95,6 @@ class SaveQueue(QObject):
         elif isinstance(error, DuplicateNoteError):
             self.status_by_source[draft.source_id] = NOT_SAVED_DUPLICATE
         else:
-            self.status_by_source[draft.source_id] = f"Not saved: {error}"
+            self.status_by_source[draft.source_id] = f"{NOT_SAVED}: {error}"
         self.state_changed.emit()
         self.process()
