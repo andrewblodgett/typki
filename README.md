@@ -7,23 +7,29 @@ There are already a couple projects out there that integrate typst into anki, bu
 
 ## Installing
 
-Typki has only been tested on Linux. You need:
+Typki has only been tested on Linux. You'll also need [Anki](https://apps.ankiweb.net) (the desktop app).
 
-- [Anki](https://apps.ankiweb.net) (the desktop app)
-- [uv](https://docs.astral.sh/uv/getting-started/installation/), which also fetches the Python version Typki needs
+Install Typki with:
 
-Then:
+```sh
+curl -LsSf https://raw.githubusercontent.com/andrewblodgett/typki/main/install.sh | sh
+```
+
+This installs [uv](https://docs.astral.sh/uv/) if you don't have it (uv also fetches the Python version Typki needs), installs Typki, and adds it to your app launcher. Open Typki from the launcher like any other app, or run `typki` in a terminal.
+
+To update, run `uv tool upgrade typki`. To uninstall, run `uv tool uninstall typki` and delete `~/.local/share/applications/typki.desktop`.
+
+If you already have uv, `uv tool install git+https://github.com/andrewblodgett/typki` does the same thing; Typki adds itself to the launcher the first time you run it.
+
+### For development
 
 ```sh
 git clone https://github.com/andrewblodgett/typki.git
 cd typki
 uv tool install --editable .
-typki --install-launcher
 ```
 
-The last command adds Typki to your app launcher, so you can open it like any other app. From a terminal, run `typki`.
-
-Because the install is editable, Typki always runs the code in the folder you cloned. After a `git pull` there's nothing to reinstall, unless the dependencies changed, in which case run `uv tool install --editable . --reinstall`.
+Run `typki` once to add it to your launcher. An editable install runs the code in your clone directly, so changes take effect the next time you open Typki. If you change the dependencies, run `uv tool install --editable . --reinstall`. Run the tests with `uv run pytest`.
 
 ## Setting up
 

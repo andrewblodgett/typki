@@ -2,7 +2,7 @@ from pathlib import Path
 
 from typki.domain.card import CardDraft
 from typki.domain.preamble import DEFAULT_HEADER
-from typki.launcher import APP_ID, install_launcher
+from typki.launcher import APP_ID, ensure_launcher, install_launcher, launcher_paths
 from typki.library.drafts import DraftStore
 from typki.library.outbox import Outbox
 from typki.library.store import Library
@@ -63,3 +63,26 @@ def test_launcher_entry_points_at_executable_and_ships_icon(tmp_path: Path) -> N
     assert f'Exec="{executable}"' in text
     assert f"Icon={APP_ID}" in text and f"StartupWMClass={APP_ID}" in text
     assert icon.read_text().startswith("<svg")
+
+
+def test_launcher_is_created_once_and_repaired_when_stale(tmp_path: Path) -> None:
+    executable = tmp_path / "bin" / "typki"
+    executable.parent.mkdir()
+    executable.write_text("")
+    data_dir = tmp_path / "share"
+    entry, _icon = launcher_paths(data_dir)
+    ensure_launcher(executable, data_dir)
+    assert f'Exec="{executable}"' in entry.read_text()
+    entry.write_text(entry.read_text() + "Keywords=kept;\n")
+    ensure_launcher(executable, data_dir)
+    assert "Keywords=kept;" in entry.read_text()
+    install_launcher(tmp_path / "gone" / "typki", data_dir)
+    ensure_launcher(executable, data_dir)
+    assert f'Exec="{executable}"' in entry.read_text()
+
+
+def test_launcher_is_not_created_for_other_programs(tmp_path: Path) -> None:
+    python = tmp_path / "python3"
+    python.write_text("")
+    ensure_launcher(python, tmp_path / "share")
+    assert not launcher_paths(tmp_path / "share")[0].exists()

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from typki.anki.ankiconnect import DEFAULT_URL, AnkiConnectGateway
 from typki.anki.fake_anki import running_fake_ankiconnect
 from typki.card_service import CardService
-from typki.launcher import APP_ID, ICON_PATH, install_launcher, user_data_dir
+from typki.launcher import APP_ID, ICON_PATH, ensure_launcher, install_launcher, user_data_dir
 from typki.library.store import Library
 from typki.render.compiler import Renderer
 from typki.typst_syntax.catalog import warm_catalog_in_background
@@ -50,10 +50,15 @@ def resolve_library_path(settings: QSettings, requested: Path | None) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parse_arguments(sys.argv[1:] if argv is None else argv)
+    executable = Path(sys.argv[0]).absolute()
     if arguments.install_launcher:
-        for path in install_launcher(Path(sys.argv[0]).absolute(), user_data_dir()):
+        for path in install_launcher(executable, user_data_dir()):
             print(f"Wrote {path}")
         return 0
+    try:
+        ensure_launcher(executable, user_data_dir())
+    except OSError as error:
+        print(f"typki: could not add the app launcher entry: {error}", file=sys.stderr)
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
