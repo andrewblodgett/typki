@@ -5,6 +5,8 @@ I had claude make this for me to harness the power of two great pieces of softwa
 
 There are already a couple projects out there that integrate typst into anki, but none of them were exactly what I wanted; they aim more for converting your notes into flashcards. I don't take notes though in the traditional sense, I only write down the most important things and save them as spaced review flashcards so that I'll remember them forever, and I wanted software to facilitate that. But luckily tokens are cheap, so claude cooked up this little app where you can do all your flashcards directly in typst and it will save them as SVG into your anki deck. 
 
+If this seems useful to you, here's all the claudeslop for your agent to help you set it up:
+
 ## Installing
 
 Typki has only been tested on Linux. You'll also need [Anki](https://apps.ankiweb.net) (the desktop app).
