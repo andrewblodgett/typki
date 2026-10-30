@@ -38,6 +38,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.14"
 strict = true
 files = ["src", "tests"]
+untyped_calls_exclude = ["pytestqt"]
 
 [[tool.mypy.overrides]]
 module = ["typst", "pygments.*"]
