@@ -9,7 +9,7 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
 
 from conftest import replace_defn
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QListWidgetItem
 from pytestqt.qtbot import QtBot
 
 from typki.anki import note_type
@@ -228,11 +228,27 @@ def test_browse_loads_more_on_scroll(qtbot: QtBot, window: MainWindow, service: 
     qtbot.waitUntil(lambda: browser.results.count() == 95, timeout=WAIT_MS)
 
 
-def test_ctrl_delete_removes_card(
+def select_card(window: MainWindow, note_id: int) -> QListWidgetItem:
+    results = window.browser.results
+    results.setFocus()
+    item = next(
+        results.item(index)
+        for index in range(results.count())
+        if results.item(index).data(Qt.ItemDataRole.UserRole) == note_id
+    )
+    results.setCurrentItem(item)
+    return item
+
+
+@pytest.mark.parametrize(
+    "modifier", [Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.ControlModifier], ids=["del", "ctrl-del"]
+)
+def test_delete_key_removes_selected_card(
     qtbot: QtBot,
     window: MainWindow,
     service: CardService,
     fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+    modifier: Qt.KeyboardModifier,
 ) -> None:
     _, fake = fake_ankiconnect
     doomed = service.save(CardDraft("Real Analysis", "", (), "delete me", "")).note_id
@@ -240,17 +256,27 @@ def test_ctrl_delete_removes_card(
     window.tabs.setCurrentIndex(1)
     browser = window.browser
     qtbot.waitUntil(lambda: browser.results.count() == 2, timeout=WAIT_MS)
-    browser.results.setFocus()
-    row = next(
-        index
-        for index in range(browser.results.count())
-        if browser.results.item(index).data(Qt.ItemDataRole.UserRole) == doomed
-    )
-    browser.results.setCurrentRow(row)
-    qtbot.keyClick(browser.results, Qt.Key.Key_Delete, Qt.KeyboardModifier.ControlModifier)
+    select_card(window, doomed)
+    qtbot.keyClick(browser.results, Qt.Key.Key_Delete, modifier)
     qtbot.waitUntil(lambda: doomed not in fake.notes, timeout=WAIT_MS)
     qtbot.waitUntil(lambda: browser.results.count() == 1, timeout=WAIT_MS)
     assert len(fake.notes) == 1
+
+
+def test_right_click_menu_deletes_card(
+    qtbot: QtBot,
+    window: MainWindow,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+) -> None:
+    _, fake = fake_ankiconnect
+    doomed = service.save(CardDraft("Real Analysis", "", (), "delete me", "")).note_id
+    window.tabs.setCurrentIndex(1)
+    qtbot.waitUntil(lambda: window.browser.results.count() == 1, timeout=WAIT_MS)
+    menu = window.browser.card_menu_for(select_card(window, doomed))
+    assert [action.text() for action in menu.actions()] == ["Open", "Delete"]
+    menu.actions()[1].trigger()
+    qtbot.waitUntil(lambda: doomed not in fake.notes, timeout=WAIT_MS)
 
 
 def test_leaving_global_tab_rerenders_in_background(

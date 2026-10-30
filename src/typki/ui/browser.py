@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 
-from PySide6.QtCore import QByteArray, QEvent, QObject, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QImage, QKeyEvent, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QLineEdit, QListView, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu, QVBoxLayout, QWidget
 
 from typki.card_service import CardService, SearchResult
 from typki.render.svg_postprocess import svg_for_display
@@ -56,7 +56,7 @@ def load_page(service: CardService, query: str, offset: int, color: str) -> Brow
     return BrowsePage(search=search, thumbnails=thumbnails)
 
 
-DELETE_SHORTCUT = "Ctrl+Delete"
+DELETE_SHORTCUTS = ("Delete", "Ctrl+Delete", "Backspace")
 
 
 class BrowserPage(QWidget):
@@ -99,9 +99,12 @@ class BrowserPage(QWidget):
         self.results.itemActivated.connect(self.on_item_activated)
         self.results.verticalScrollBar().valueChanged.connect(self.on_scrolled)
         self.search_edit.installEventFilter(self)
-        delete_shortcut = QShortcut(QKeySequence(DELETE_SHORTCUT), self.results)
-        delete_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
-        delete_shortcut.activated.connect(self.request_delete)
+        for sequence in DELETE_SHORTCUTS:
+            delete_shortcut = QShortcut(QKeySequence(sequence), self.results)
+            delete_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            delete_shortcut.activated.connect(self.request_delete)
+        self.results.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.results.customContextMenuRequested.connect(self.show_card_menu)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.search_edit and event.type() == QEvent.Type.KeyPress:
@@ -174,6 +177,19 @@ class BrowserPage(QWidget):
 
     def on_item_activated(self, item: QListWidgetItem) -> None:
         self.open_requested.emit(int(item.data(NOTE_ID_ROLE)))
+
+    def card_menu_for(self, item: QListWidgetItem) -> QMenu:
+        menu = QMenu(self)
+        menu.addAction("Open", lambda: self.on_item_activated(item))
+        menu.addAction("Delete", self.request_delete)
+        return menu
+
+    def show_card_menu(self, position: QPoint) -> None:
+        item = self.results.itemAt(position)
+        if item is None:
+            return
+        self.results.setCurrentItem(item)
+        self.card_menu_for(item).exec(self.results.viewport().mapToGlobal(position))
 
     def request_delete(self) -> None:
         item = self.results.currentItem()
