@@ -17,8 +17,8 @@ DEFAULT_HEADER = """#set page(width: auto, height: auto, margin: 6pt, fill: none
   block(width: calc.min(measure(body).width, max-width), body)
 }
 
-#let definition(term, body) = [*Definition* (#term). #body]
-#let theorem(name, statement) = [*Theorem* (#name). #emph(statement)]
+#let Definition(term, body) = [*Definition* (#term). #body]
+#let Theorem(name, statement) = [*Theorem* (#name). #emph(statement)]
 """
 
 

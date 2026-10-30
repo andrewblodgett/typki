@@ -31,42 +31,44 @@ def test_staleness() -> None:
     assert is_stale("h", "v", "h", "v2")
 
 
-def test_templates_come_from_header_functions() -> None:
+def test_capitalized_header_functions_are_templates() -> None:
     header = """#set text(size: 12pt)
 #let RR = $bb(R)$
-#let theorem(name, statement) = [*Theorem* (#name). #statement]
-#let lemma(body, numbered: true) = [*Lemma.* #body]
-#let qed() = [∎]
-  #let indented(x) = x
-#let theorem(other) = [duplicate]
+#let Theorem(name, statement) = [*Theorem* (#name). #statement]
+#let Lemma(body, numbered: true) = [*Lemma.* #body]
+#let Qed() = [∎]
+#let proof(body) = [_Proof._ #body]
+#let vb(x) = math.upright(math.bold(x))
+  #let Indented(x) = x
+#let Theorem(other) = [duplicate]
 """
     templates = templates_from_header(header)
-    assert [template.title for template in templates] == ["Blank", "theorem", "lemma", "qed"]
-    assert find_template("theorem", templates).front == "#theorem[«name»][«statement»]"
-    assert find_template("lemma", templates).front == "#lemma[«body»]"
-    assert find_template("qed", templates).front == "#qed()"
-    assert find_template("missing", templates) is BLANK
+    assert [template.title for template in templates] == ["Blank", "Theorem", "Lemma", "Qed"]
+    assert find_template("Theorem", templates).front == "#Theorem[«name»][«statement»]"
+    assert find_template("Lemma", templates).front == "#Lemma[«body»]"
+    assert find_template("Qed", templates).front == "#Qed()"
+    assert find_template("proof", templates) is BLANK
 
 
 def test_default_header_ships_definition_and_theorem() -> None:
     names = [template.name for template in templates_from_header(DEFAULT_HEADER)]
-    assert names == ["", "definition", "theorem"]
+    assert names == ["", "Definition", "Theorem"]
 
 
 def test_choosing_a_template_swaps_its_tag() -> None:
     templates = templates_from_header(DEFAULT_HEADER)
-    theorem = find_template("theorem", templates)
-    definition = find_template("definition", templates)
-    assert retag_for_template(("analysis",), theorem, templates) == ("analysis", "theorem")
-    assert retag_for_template(("analysis", "theorem"), definition, templates) == ("analysis", "definition")
-    assert retag_for_template(("theorem", "analysis"), theorem, templates) == ("analysis", "theorem")
-    assert retag_for_template(("analysis", "definition"), BLANK, templates) == ("analysis",)
-    assert template_for_tags(("analysis", "theorem"), templates) == theorem
+    theorem = find_template("Theorem", templates)
+    definition = find_template("Definition", templates)
+    assert retag_for_template(("analysis",), theorem, templates) == ("analysis", "Theorem")
+    assert retag_for_template(("analysis", "Theorem"), definition, templates) == ("analysis", "Definition")
+    assert retag_for_template(("Theorem", "analysis"), theorem, templates) == ("analysis", "Theorem")
+    assert retag_for_template(("analysis", "Definition"), BLANK, templates) == ("analysis",)
+    assert template_for_tags(("analysis", "Theorem"), templates) == theorem
     assert template_for_tags(("analysis",), templates) is BLANK
 
 
 def test_placeholder_spans() -> None:
-    text = "#definition[«term»][«body»]"
+    text = "#Definition[«term»][«body»]"
     assert [text[start:end] for start, end in placeholder_spans(text)] == ["«term»", "«body»"]
 
 

@@ -124,20 +124,20 @@ def test_template_starts_new_card_and_placeholders_block_saving(
     _, fake = fake_ankiconnect
     capture = window.capture
     type_card(window, "Real Analysis", "first card", "first answer")
-    capture.template_combo.setCurrentIndex(capture.template_combo.findData("theorem"))
+    capture.template_combo.setCurrentIndex(capture.template_combo.findData("Theorem"))
     capture.template_combo.activated.emit(capture.template_combo.currentIndex())
     qtbot.waitUntil(lambda: len(note_with_front(fake, "first card")) == 1, timeout=WAIT_MS)
-    assert capture.front_editor.toPlainText() == "#theorem[«name»][«statement»]"
+    assert capture.front_editor.toPlainText() == "#Theorem[«name»][«statement»]"
     assert capture.front_editor.textCursor().selectedText() == "«name»"
     assert capture.back_editor.toPlainText() == ""
-    assert capture.tags_edit.text().split()[-1] == "theorem"
+    assert capture.tags_edit.text().split()[-1] == "Theorem"
     qtbot.wait(800)
     assert len(fake.notes) == 1
-    capture.front_editor.setPlainText("#theorem[Rolle][$f(a) = f(b) ==> exists c : f'(c) = 0$]")
+    capture.front_editor.setPlainText("#Theorem[Rolle][$f(a) = f(b) ==> exists c : f'(c) = 0$]")
     capture.back_editor.setPlainText("Apply the mean value theorem.")
     qtbot.waitUntil(lambda: len(fake.notes) == 2, timeout=WAIT_MS)
     newest = fake.notes[max(fake.notes)]
-    assert "theorem" in newest.tags
+    assert "Theorem" in newest.tags
 
 
 def test_new_card_shortcut_saves_immediately_and_resets(
@@ -389,10 +389,13 @@ def test_global_tab_shows_and_saves_header(qtbot: QtBot, window: MainWindow, ser
     qtbot.waitUntil(lambda: window.capture.template_combo.findData("shiny") < 0, timeout=WAIT_MS)
 
 
-def test_header_functions_become_templates(qtbot: QtBot, window: MainWindow, service: CardService) -> None:
-    lemma = "#let lemma(statement) = [*Lemma.* #statement]\n"
-    service.library.write_header(service.library.read_header() + lemma)
-    qtbot.waitUntil(lambda: window.capture.template_combo.findData("lemma") >= 0, timeout=WAIT_MS)
+def test_capitalized_header_functions_become_templates(
+    qtbot: QtBot, window: MainWindow, service: CardService
+) -> None:
+    added = "#let Lemma(statement) = [*Lemma.* #statement]\n#let helper(x) = x\n"
+    service.library.write_header(service.library.read_header() + added)
+    qtbot.waitUntil(lambda: window.capture.template_combo.findData("Lemma") >= 0, timeout=WAIT_MS)
+    assert window.capture.template_combo.findData("helper") < 0
 
 
 def test_header_error_is_listed_and_jumps_to_line(qtbot: QtBot, window: MainWindow) -> None:
@@ -607,13 +610,13 @@ def test_card_without_back_is_kept_and_never_saved(
 
 def test_unfilled_template_blocks_switching_but_blank_card_does_not(window: MainWindow) -> None:
     capture = window.capture
-    capture.template_combo.setCurrentIndex(capture.template_combo.findData("theorem"))
+    capture.template_combo.setCurrentIndex(capture.template_combo.findData("Theorem"))
     capture.template_combo.activated.emit(capture.template_combo.currentIndex())
-    assert capture.front_editor.toPlainText() == "#theorem[«name»][«statement»]"
+    assert capture.front_editor.toPlainText() == "#Theorem[«name»][«statement»]"
     capture.back_editor.setPlainText("an answer")
     capture.new_card()
     assert capture.front_editor.textCursor().selectedText() == "«name»"
-    assert capture.template_key() == "theorem"
+    assert capture.template_key() == "Theorem"
     capture.front_editor.clear()
     capture.back_editor.clear()
     capture.new_card()

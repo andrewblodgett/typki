@@ -39,7 +39,7 @@ def templates_from_header(header: str) -> tuple[Template, ...]:
     templates: dict[str, Template] = {}
     for match in LET_DEFINITION.finditer(header):
         indent, name, parameters = match.groups()
-        if indent or parameters is None:
+        if indent or parameters is None or not name[0].isupper():
             continue
         templates.setdefault(name, Template(name=name, front=template_call(name, parameters)))
     return (BLANK, *templates.values())
