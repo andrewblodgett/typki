@@ -47,5 +47,17 @@ def find_template(name: str, templates: tuple[Template, ...]) -> Template:
     return next((template for template in templates if template.name == name), BLANK)
 
 
+def template_for_tags(tags: tuple[str, ...], templates: tuple[Template, ...]) -> Template:
+    return next((template for template in templates if template.name and template.name in tags), BLANK)
+
+
+def retag_for_template(
+    tags: tuple[str, ...], template: Template, templates: tuple[Template, ...]
+) -> tuple[str, ...]:
+    template_names = {other.name for other in templates if other.name}
+    kept = tuple(tag for tag in tags if tag not in template_names)
+    return (*kept, template.name) if template.name else kept
+
+
 def placeholder_spans(text: str) -> list[tuple[int, int]]:
     return [(match.start(), match.end()) for match in PLACEHOLDER_PATTERN.finditer(text)]

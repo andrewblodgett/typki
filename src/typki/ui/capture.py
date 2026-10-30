@@ -14,7 +14,15 @@ from PySide6.QtWidgets import (
 
 from typki.card_service import CardRender, CardService, SaveResult
 from typki.domain.card import CardDraft, StoredCard, new_source_id, parse_tags
-from typki.domain.template import BLANK, PLACEHOLDER_PATTERN, Template, find_template, templates_from_header
+from typki.domain.template import (
+    BLANK,
+    PLACEHOLDER_PATTERN,
+    Template,
+    find_template,
+    retag_for_template,
+    template_for_tags,
+    templates_from_header,
+)
 from typki.library.drafts import DraftStore
 from typki.render.compiler import SideRender
 from typki.render.diagnostics import Diagnostic
@@ -207,6 +215,8 @@ class CapturePage(QWidget):
         self.note_id = None
         self.source_id = new_source_id()
         self.select_template_key(template.name)
+        tags = retag_for_template(parse_tags(self.tags_edit.text()), template, self.templates)
+        self.tags_edit.setText(" ".join(tags))
         self.back_editor.setPlainText("")
         self.front_editor.set_source(template.front)
         self.restoring = False
@@ -225,7 +235,7 @@ class CapturePage(QWidget):
         self.source_id = card.source_id or new_source_id()
         self.deck_combo.setCurrentText(card.deck_name)
         self.tags_edit.setText(" ".join(card.tags))
-        self.select_template_key(BLANK.name)
+        self.select_template_key(template_for_tags(card.tags, self.templates).name)
         self.front_editor.setPlainText(card.front_source)
         self.back_editor.setPlainText(card.back_source)
         self.restoring = False

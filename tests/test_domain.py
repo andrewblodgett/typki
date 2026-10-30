@@ -1,7 +1,14 @@
 from typki.domain.card import parse_tags
 from typki.domain.preamble import DEFAULT_HEADER, build_preamble
 from typki.domain.staleness import is_stale
-from typki.domain.template import BLANK, find_template, placeholder_spans, templates_from_header
+from typki.domain.template import (
+    BLANK,
+    find_template,
+    placeholder_spans,
+    retag_for_template,
+    template_for_tags,
+    templates_from_header,
+)
 
 
 def test_preamble_header_ends_with_newline_and_counts_lines() -> None:
@@ -44,6 +51,18 @@ def test_templates_come_from_header_functions() -> None:
 def test_default_header_ships_definition_and_theorem() -> None:
     names = [template.name for template in templates_from_header(DEFAULT_HEADER)]
     assert names == ["", "definition", "theorem"]
+
+
+def test_choosing_a_template_swaps_its_tag() -> None:
+    templates = templates_from_header(DEFAULT_HEADER)
+    theorem = find_template("theorem", templates)
+    definition = find_template("definition", templates)
+    assert retag_for_template(("analysis",), theorem, templates) == ("analysis", "theorem")
+    assert retag_for_template(("analysis", "theorem"), definition, templates) == ("analysis", "definition")
+    assert retag_for_template(("theorem", "analysis"), theorem, templates) == ("analysis", "theorem")
+    assert retag_for_template(("analysis", "definition"), BLANK, templates) == ("analysis",)
+    assert template_for_tags(("analysis", "theorem"), templates) == theorem
+    assert template_for_tags(("analysis",), templates) is BLANK
 
 
 def test_placeholder_spans() -> None:

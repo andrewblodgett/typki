@@ -136,10 +136,13 @@ def test_template_starts_new_card_and_placeholders_block_saving(
     assert capture.front_editor.toPlainText() == "#theorem[«name»][«statement»]"
     assert capture.front_editor.textCursor().selectedText() == "«name»"
     assert capture.back_editor.toPlainText() == ""
+    assert capture.tags_edit.text().split()[-1] == "theorem"
     qtbot.wait(800)
     assert len(fake.notes) == 1
     capture.front_editor.setPlainText("#theorem[Rolle][$f(a) = f(b) ==> exists c : f'(c) = 0$]")
     qtbot.waitUntil(lambda: len(fake.notes) == 2, timeout=WAIT_MS)
+    newest = fake.notes[max(fake.notes)]
+    assert "theorem" in newest.tags
 
 
 def test_new_card_shortcut_saves_immediately_and_resets(
