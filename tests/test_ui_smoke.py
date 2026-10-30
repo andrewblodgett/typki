@@ -123,7 +123,7 @@ def test_template_starts_new_card_and_placeholders_block_saving(
 ) -> None:
     _, fake = fake_ankiconnect
     capture = window.capture
-    type_card(window, "Real Analysis", "first card")
+    type_card(window, "Real Analysis", "first card", "first answer")
     capture.template_combo.setCurrentIndex(capture.template_combo.findData("theorem"))
     capture.template_combo.activated.emit(capture.template_combo.currentIndex())
     qtbot.waitUntil(lambda: len(note_with_front(fake, "first card")) == 1, timeout=WAIT_MS)
@@ -134,6 +134,7 @@ def test_template_starts_new_card_and_placeholders_block_saving(
     qtbot.wait(800)
     assert len(fake.notes) == 1
     capture.front_editor.setPlainText("#theorem[Rolle][$f(a) = f(b) ==> exists c : f'(c) = 0$]")
+    capture.back_editor.setPlainText("Apply the mean value theorem.")
     qtbot.waitUntil(lambda: len(fake.notes) == 2, timeout=WAIT_MS)
     newest = fake.notes[max(fake.notes)]
     assert "theorem" in newest.tags
@@ -583,3 +584,37 @@ def test_unsent_saves_go_to_the_outbox_on_close(window: MainWindow) -> None:
     window.save_queue.pending.append(draft)
     window.save_queue.persist_unsent()
     assert [queued.source_id for queued in window.save_queue.outbox.drafts()] == [draft.source_id]
+
+
+def test_card_without_back_is_kept_and_never_saved(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    _, fake = fake_ankiconnect
+    capture = window.capture
+    type_card(window, "Real Analysis", "question with no answer")
+    settle(window)
+    qtbot.wait(600)
+    assert not fake.notes
+    qtbot.mouseClick(capture.save_new_button, Qt.MouseButton.LeftButton)
+    assert capture.front_editor.toPlainText() == "question with no answer"
+    assert "The back is empty" in window.indicator.text()
+    assert capture.back_editor.hasFocus()
+    capture.back_editor.setPlainText("the answer")
+    qtbot.mouseClick(capture.save_new_button, Qt.MouseButton.LeftButton)
+    assert capture.front_editor.toPlainText() == ""
+    qtbot.waitUntil(lambda: len(note_with_front(fake, "question with no answer")) == 1, timeout=WAIT_MS)
+
+
+def test_unfilled_template_blocks_switching_but_blank_card_does_not(window: MainWindow) -> None:
+    capture = window.capture
+    capture.template_combo.setCurrentIndex(capture.template_combo.findData("theorem"))
+    capture.template_combo.activated.emit(capture.template_combo.currentIndex())
+    assert capture.front_editor.toPlainText() == "#theorem[«name»][«statement»]"
+    capture.back_editor.setPlainText("an answer")
+    capture.new_card()
+    assert capture.front_editor.textCursor().selectedText() == "«name»"
+    assert capture.template_key() == "theorem"
+    capture.front_editor.clear()
+    capture.back_editor.clear()
+    capture.new_card()
+    assert capture.back_editor.toPlainText() == ""

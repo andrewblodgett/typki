@@ -119,6 +119,7 @@ class MainWindow(QMainWindow):
         self.watcher = LibraryWatcher(service.library, self)
         self.watcher.changed.connect(self.on_library_changed)
         capture.save_state_changed.connect(self.update_indicator)
+        capture.notice.connect(self.show_notice)
         save_queue.state_changed.connect(self.update_indicator)
         save_queue.went_offline.connect(self.on_went_offline)
         self.rerender.state_changed.connect(self.update_indicator)

@@ -1,6 +1,8 @@
 import uuid
 from dataclasses import dataclass, field
 
+from typki.domain.template import PLACEHOLDER_PATTERN
+
 
 def new_source_id() -> str:
     return str(uuid.uuid4())
@@ -42,6 +44,16 @@ class StoredCard:
             source_id=self.source_id or new_source_id(),
             note_id=self.note_id,
         )
+
+
+def missing_content(front: str, back: str) -> str | None:
+    if not front.strip():
+        return "The front is empty"
+    if not back.strip():
+        return "The back is empty"
+    if PLACEHOLDER_PATTERN.search(front) or PLACEHOLDER_PATTERN.search(back):
+        return "Fill in the «» placeholders"
+    return None
 
 
 def parse_tags(text: str) -> tuple[str, ...]:

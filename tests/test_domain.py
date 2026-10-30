@@ -1,4 +1,4 @@
-from typki.domain.card import parse_tags
+from typki.domain.card import missing_content, parse_tags
 from typki.domain.preamble import DEFAULT_HEADER, build_preamble
 from typki.domain.staleness import is_stale
 from typki.domain.template import (
@@ -72,3 +72,10 @@ def test_placeholder_spans() -> None:
 
 def test_parse_tags_deduplicates_and_keeps_order() -> None:
     assert parse_tags(" b a  b c ") == ("b", "a", "c")
+
+
+def test_cards_need_front_back_and_filled_placeholders() -> None:
+    assert missing_content("", "answer") == "The front is empty"
+    assert missing_content("question", "  \n") == "The back is empty"
+    assert missing_content("#defn[«term»][x]", "answer") == "Fill in the «» placeholders"
+    assert missing_content("question", "answer") is None

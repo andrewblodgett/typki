@@ -5,7 +5,7 @@ from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import QComboBox, QPushButton, QWidget
 
 from typki.card_service import CardRender, CardService, SaveResult
-from typki.domain.card import CardDraft, StoredCard, new_source_id, parse_tags
+from typki.domain.card import CardDraft, StoredCard, missing_content, new_source_id, parse_tags
 from typki.domain.template import (
     BLANK,
     PLACEHOLDER_PATTERN,
@@ -72,6 +72,7 @@ class DeckComboBox(QComboBox):
 
 class CapturePage(QWidget):
     save_state_changed = Signal()
+    notice = Signal(str)
 
     def __init__(
         self,
@@ -92,6 +93,7 @@ class CapturePage(QWidget):
         self.saved_snapshot: Snapshot | None = None
         self.last_render_ok = False
         self.restoring = False
+        self.template_name = BLANK.name
 
         self.deck_combo = DeckComboBox()
         self.deck_combo.setMinimumWidth(240)
@@ -131,7 +133,7 @@ class CapturePage(QWidget):
         self.draft_timer = debouncer(self, DRAFT_SAVE_DEBOUNCE_MS, self.save_draft)
         self.tags_edit.textChanged.connect(self.on_metadata_changed)
         self.deck_combo.currentTextChanged.connect(self.on_metadata_changed)
-        self.template_combo.activated.connect(lambda _index: self.new_card(self.template_key()))
+        self.template_combo.activated.connect(self.on_template_chosen)
         self.diagnostics_list.revealed.connect(self.reveal_diagnostic)
         self.save_new_button.clicked.connect(lambda: self.new_card())
         save_queue.saved.connect(self.on_saved)
@@ -171,12 +173,25 @@ class CapturePage(QWidget):
         draft = self.current_draft()
         return (draft.deck_name, draft.tags, draft.front, draft.back)
 
+    def missing_content(self) -> str | None:
+        return missing_content(self.front_editor.toPlainText(), self.back_editor.toPlainText())
+
     def is_savable(self) -> bool:
-        front = self.front_editor.toPlainText()
-        back = self.back_editor.toPlainText()
-        if not front.strip() or PLACEHOLDER_PATTERN.search(front) or PLACEHOLDER_PATTERN.search(back):
-            return False
-        return self.snapshot() != self.saved_snapshot
+        return self.missing_content() is None and self.snapshot() != self.saved_snapshot
+
+    def can_leave_card(self) -> bool:
+        front, back = self.front_editor.toPlainText(), self.back_editor.toPlainText()
+        missing = missing_content(front, back)
+        if missing is None or not (front.strip() or back.strip()) or self.snapshot() == self.saved_snapshot:
+            return True
+        self.notice.emit(missing)
+        if not front.strip() or not back.strip():
+            target = self.front_editor if not front.strip() else self.back_editor
+        else:
+            target = self.front_editor if PLACEHOLDER_PATTERN.search(front) else self.back_editor
+            target.select_placeholder(forward=True, from_position=0)
+        target.setFocus()
+        return False
 
     def save_status(self) -> str:
         if self.autosave_timer.isActive() or self.save_queue.is_saving(self.source_id):
@@ -199,6 +214,7 @@ class CapturePage(QWidget):
             self.back_editor.setPlainText(draft.back)
             self.front_editor.set_source(draft.front)
             self.source_id, self.note_id = draft.source_id, draft.note_id
+        self.template_name = draft.template_name
         self.saved_snapshot = self.snapshot() if saved else None
         self.front_editor.setFocus()
         self.request_render()
@@ -215,7 +231,14 @@ class CapturePage(QWidget):
         index = self.template_combo.findData(find_template(name, self.templates).name)
         self.template_combo.setCurrentIndex(max(index, 0))
 
+    def on_template_chosen(self, _index: int) -> None:
+        chosen = self.template_key()
+        self.select_template_key(self.template_name)
+        self.new_card(chosen)
+
     def new_card(self, template_name: str | None = None) -> None:
+        if not self.can_leave_card():
+            return
         self.flush()
         self.start_new_card(self.template_key() if template_name is None else template_name)
 
@@ -225,6 +248,8 @@ class CapturePage(QWidget):
         self.show_draft(CardDraft(self.deck_name(), template.name, tags, template.front, ""), saved=True)
 
     def load_card(self, card: StoredCard) -> None:
+        if not self.can_leave_card():
+            return
         self.flush()
         self.show_draft(card.as_draft(template_for_tags(card.tags, self.templates).name), saved=True)
 
