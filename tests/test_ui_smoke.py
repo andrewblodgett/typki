@@ -9,6 +9,7 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
 
 from conftest import replace_defn
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QApplication, QListWidgetItem
 from pytestqt.qtbot import QtBot
 
@@ -525,3 +526,69 @@ def test_switching_theme_recolors_without_touching_sources(
     assert not window.global_page.write_pending
     assert not window.capture.autosave_timer.isActive()
     assert service.library.read_header() == header
+
+
+def test_typing_math_completes_functions_with_tab(qtbot: QtBot, window: MainWindow) -> None:
+    editor = window.capture.front_editor
+    editor.setFocus()
+    qtbot.keyClicks(editor, "$fr")
+    assert editor.toPlainText() == "$fr$"
+    popup = editor.completion_popup
+    qtbot.waitUntil(popup.is_visible, timeout=WAIT_MS)
+    assert popup.view.currentIndex().data() == "frac"
+    qtbot.keyClick(popup.view, Qt.Key.Key_Tab)
+    assert editor.toPlainText() == "$frac()$"
+    assert editor.textCursor().position() == len("$frac(")
+    qtbot.keyClicks(editor, "a")
+    qtbot.keyClick(editor, Qt.Key.Key_ParenRight)
+    qtbot.keyClick(editor, Qt.Key.Key_Dollar)
+    assert editor.toPlainText() == "$frac(a)$"
+    assert editor.textCursor().position() == len("$frac(a)$")
+
+
+def test_hash_completion_lists_header_macros(qtbot: QtBot, window: MainWindow) -> None:
+    editor = window.capture.front_editor
+    editor.setFocus()
+    qtbot.keyClicks(editor, "#def")
+    popup = editor.completion_popup
+    qtbot.waitUntil(popup.is_visible, timeout=WAIT_MS)
+    qtbot.keyClick(popup.view, Qt.Key.Key_Return)
+    assert editor.toPlainText() == "#defn()"
+
+
+def test_escape_closes_completion_without_inserting(qtbot: QtBot, window: MainWindow) -> None:
+    editor = window.capture.front_editor
+    editor.setFocus()
+    qtbot.keyClicks(editor, "$al")
+    popup = editor.completion_popup
+    qtbot.waitUntil(popup.is_visible, timeout=WAIT_MS)
+    qtbot.keyClick(popup.view, Qt.Key.Key_Escape)
+    assert not popup.is_visible()
+    assert editor.toPlainText() == "$al$"
+
+
+def test_editor_line_shortcuts(qtbot: QtBot, window: MainWindow) -> None:
+    editor = window.capture.front_editor
+    editor.setFocus()
+    editor.setPlainText("first\nsecond")
+    qtbot.keyClick(editor, Qt.Key.Key_Slash, Qt.KeyboardModifier.ControlModifier)
+    assert editor.toPlainText() == "// first\nsecond"
+    qtbot.keyClick(editor, Qt.Key.Key_Slash, Qt.KeyboardModifier.ControlModifier)
+    qtbot.keyClick(editor, Qt.Key.Key_Down, Qt.KeyboardModifier.AltModifier)
+    assert editor.toPlainText() == "second\nfirst"
+    qtbot.keyClick(editor, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    assert editor.toPlainText() == "first\nsecond"
+    editor.moveCursor(QTextCursor.MoveOperation.Start)
+    qtbot.keyClick(
+        editor, Qt.Key.Key_K, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+    )
+    assert editor.toPlainText() == "second"
+
+
+def test_matching_bracket_is_highlighted(qtbot: QtBot, window: MainWindow) -> None:
+    editor = window.capture.front_editor
+    editor.setPlainText("#f(x)")
+    cursor = editor.textCursor()
+    cursor.setPosition(3)
+    editor.setTextCursor(cursor)
+    assert [selection.cursor.selectionStart() for selection in editor.bracket_selections] == [2, 4]

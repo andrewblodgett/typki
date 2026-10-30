@@ -13,6 +13,7 @@ from typki.library.drafts import DraftStore
 from typki.library.outbox import Outbox
 from typki.library.store import Library
 from typki.render.compiler import Renderer
+from typki.typst_syntax.catalog import warm_catalog_in_background
 from typki.ui.background import TaskRunner
 from typki.ui.browser import BrowserPage
 from typki.ui.capture import CapturePage
@@ -59,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     settings = QSettings()
     theme = find_theme(settings.value(THEME_SETTING))
     apply_to_application(app, theme)
+    warm_catalog_in_background()
 
     library = Library(resolve_library_path(settings, arguments.library))
     try:

@@ -95,7 +95,8 @@ class CapturePage(QWidget):
         self.draft_store = draft_store
         self.source_id = new_source_id()
         self.note_id: int | None = None
-        self.templates: tuple[Template, ...] = templates_from_header(service.library.read_header())
+        self.header_text = service.library.read_header()
+        self.templates: tuple[Template, ...] = templates_from_header(self.header_text)
         self.saved_snapshot: Snapshot | None = None
         self.last_render_ok = False
         self.render_in_flight = False
@@ -115,6 +116,8 @@ class CapturePage(QWidget):
         self.front_editor.setPlaceholderText("Front")
         self.back_editor = TypstEditor()
         self.back_editor.setPlaceholderText("Back")
+        for editor in (self.front_editor, self.back_editor):
+            editor.definitions_source = lambda: self.header_text
         self.diagnostics_list = QListWidget()
         self.diagnostics_list.setObjectName("diagnostics")
         self.diagnostics_list.setMaximumHeight(110)
@@ -185,7 +188,8 @@ class CapturePage(QWidget):
         self.template_combo.blockSignals(False)
 
     def refresh_templates(self) -> None:
-        self.templates = templates_from_header(self.service.library.read_header())
+        self.header_text = self.service.library.read_header()
+        self.templates = templates_from_header(self.header_text)
         self.fill_template_combo()
 
     def deck_name(self) -> str:

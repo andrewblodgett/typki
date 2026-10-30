@@ -492,6 +492,12 @@ QComboBox QAbstractItemView {{
   padding: 4px; outline: 0; selection-background-color: {theme.selection};
 }}
 QListWidget {{ padding: 6px; outline: 0; }}
+QListView#completions {{
+  background: {theme.raised}; color: {theme.text}; border: 1px solid {theme.border}; border-radius: 8px;
+  padding: 4px; outline: 0;
+}}
+QListView#completions::item {{ padding: 4px 8px; border-radius: 6px; }}
+QListView#completions::item:selected {{ background: {theme.selection}; color: {theme.text}; }}
 QListWidget::item {{ padding: 10px; border-radius: 8px; color: {theme.muted}; }}
 QListWidget::item:selected {{ background: {theme.raised}; color: {theme.text}; }}
 QListWidget::item:hover:!selected {{ background: {theme.raised}; }}
