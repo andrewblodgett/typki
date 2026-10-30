@@ -1,13 +1,14 @@
 [project]
 name = "typki"
 version = "0.1.0"
-description = "Add your description here"
+description = "Write Anki flashcards in Typst"
 readme = "README.md"
 authors = [
     { name = "Andrew Blodgett", email = "andrewblodgett00@gmail.com" }
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "pygments>=2.19",
     "pyside6>=6.12.0",
     "typst>=0.15.0",
 ]

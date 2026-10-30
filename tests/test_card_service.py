@@ -3,7 +3,7 @@ import pytest
 from typki.anki import note_type
 from typki.anki.ankiconnect import AnkiConnectGateway
 from typki.anki.fake_anki import FakeAnki
-from typki.anki.gateway import AnkiError, DuplicateNoteError
+from typki.anki.gateway import AnkiError, DuplicateNoteError, NotAnkiConnectError
 from typki.card_service import CardService, NotTypkiNoteError, RenderFailedError
 from typki.domain.card import CardDraft
 
@@ -177,3 +177,13 @@ def test_search_by_text_uses_desc(service: CardService) -> None:
     service.save(make_draft(front="Heine Borel"))
     result = service.search("Borel")
     assert [summary.card.front_source for summary in result.cards] == ["Heine Borel"]
+
+
+def test_other_servers_are_not_mistaken_for_ankiconnect(monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway = AnkiConnectGateway("http://127.0.0.1:1")
+    monkeypatch.setattr(gateway, "_send_with_retries", lambda request: b"<html>hello</html>")
+    with pytest.raises(NotAnkiConnectError):
+        gateway.version()
+    monkeypatch.setattr(gateway, "_send_with_retries", lambda request: b"{}")
+    with pytest.raises(NotAnkiConnectError):
+        gateway.version()

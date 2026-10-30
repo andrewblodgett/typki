@@ -1,11 +1,11 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
-from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QTabWidget, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QStackedWidget, QTabWidget, QWidget
 
-from typki.anki.gateway import AnkiGateway, AnkiUnavailableError
+from typki.anki.gateway import AnkiConnectTooOldError, AnkiGateway, AnkiUnavailableError
 from typki.card_service import CardService
 from typki.domain.card import StoredCard
 from typki.rerender.runner import Rerenderer
@@ -16,9 +16,12 @@ from typki.ui.capture import CapturePage
 from typki.ui.global_page import GlobalPage
 from typki.ui.library_watcher import LibraryWatcher
 from typki.ui.save_queue import SaveQueue
+from typki.ui.setup_page import SetupPage
 from typki.ui.shortcuts import SHORTCUT_ACTIONS
 
 RECONNECT_INTERVAL_MS = 5000
+SETUP_RECONNECT_INTERVAL_MS = 1500
+MINIMUM_ANKICONNECT_VERSION = 6
 NOTICE_TIMEOUT_MS = 4000
 CAPTURE_TAB = 0
 BROWSE_TAB = 1
@@ -33,7 +36,8 @@ class AnkiStartupState:
 
 
 def check_anki(gateway: AnkiGateway, service: CardService) -> AnkiStartupState:
-    gateway.version()
+    if gateway.version() < MINIMUM_ANKICONNECT_VERSION:
+        raise AnkiConnectTooOldError("AnkiConnect is out of date")
     health = service.check_note_type()
     if not health.healthy:
         service.repair_note_type(health)
@@ -41,6 +45,8 @@ def check_anki(gateway: AnkiGateway, service: CardService) -> AnkiStartupState:
 
 
 class MainWindow(QMainWindow):
+    connected = Signal()
+
     def __init__(
         self,
         gateway: AnkiGateway,
@@ -53,6 +59,7 @@ class MainWindow(QMainWindow):
         render_runner: TaskRunner,
         shortcuts: dict[str, str],
         startup_problems: list[str],
+        show_setup: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -76,7 +83,13 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(capture, "Capture")
         self.tabs.addTab(browser, "Browse")
         self.tabs.addTab(global_page, "Global")
-        self.setCentralWidget(self.tabs)
+        self.setup_page = SetupPage()
+        self.setup_page.dismissed.connect(self.dismiss_setup)
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self.tabs)
+        self.pages.addWidget(self.setup_page)
+        self.offer_setup = show_setup
+        self.setCentralWidget(self.pages)
         self.previous_tab = CAPTURE_TAB
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
@@ -160,6 +173,15 @@ class MainWindow(QMainWindow):
         self.capture.request_render()
         self.global_page.on_library_changed()
 
+    @property
+    def setup_visible(self) -> bool:
+        return self.pages.currentWidget() is self.setup_page
+
+    def dismiss_setup(self) -> None:
+        self.pages.setCurrentWidget(self.tabs)
+        self.capture.focus_front()
+        self.update_indicator()
+
     def show_capture(self) -> None:
         self.tabs.setCurrentIndex(CAPTURE_TAB)
         self.capture.focus_front()
@@ -189,6 +211,9 @@ class MainWindow(QMainWindow):
         self.update_indicator()
 
     def update_indicator(self) -> None:
+        if self.setup_visible:
+            self.indicator.setText("")
+            return
         parts = []
         queued = self.save_queue.outbox.count()
         if not self.anki_connected:
@@ -213,6 +238,10 @@ class MainWindow(QMainWindow):
 
     def on_anki_ready(self, state: AnkiStartupState) -> None:
         self.anki_connected = True
+        self.offer_setup = False
+        self.connected.emit()
+        if self.setup_visible:
+            self.dismiss_setup()
         self.capture.set_deck_names(state.deck_names)
         self.capture.tags_edit.set_known_tags(state.tags)
         self.save_queue.go_online()
@@ -223,14 +252,21 @@ class MainWindow(QMainWindow):
 
     def on_anki_unavailable(self, error: Exception) -> None:
         self.anki_connected = False
-        if not isinstance(error, AnkiUnavailableError):
-            self.show_notice(str(error))
-        self.reconnect_timer.start()
+        if self.offer_setup:
+            self.offer_setup = False
+            self.pages.setCurrentWidget(self.setup_page)
+        if self.setup_visible:
+            self.setup_page.show_error(error)
+            self.reconnect_timer.start(SETUP_RECONNECT_INTERVAL_MS)
+        else:
+            if not isinstance(error, AnkiUnavailableError):
+                self.show_notice(str(error))
+            self.reconnect_timer.start(RECONNECT_INTERVAL_MS)
         self.update_indicator()
 
     def on_went_offline(self) -> None:
         self.anki_connected = False
-        self.reconnect_timer.start()
+        self.reconnect_timer.start(RECONNECT_INTERVAL_MS)
         self.update_indicator()
 
     def open_note(self, note_id: int) -> None:

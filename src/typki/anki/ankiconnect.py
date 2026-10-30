@@ -9,6 +9,7 @@ from typki.anki.gateway import (
     AnkiUnavailableError,
     DuplicateNoteError,
     NewNote,
+    NotAnkiConnectError,
     NoteRecord,
 )
 
@@ -28,7 +29,12 @@ class AnkiConnectGateway:
         payload = json.dumps({"action": action, "version": API_VERSION, "params": params}).encode()
         request = urllib.request.Request(self.url, payload, headers={"Content-Type": "application/json"})
         body = self._send_with_retries(request)
-        reply = json.loads(body)
+        try:
+            reply = json.loads(body)
+        except ValueError as decode_error:
+            raise NotAnkiConnectError(f"{self.url} is not AnkiConnect") from decode_error
+        if not isinstance(reply, dict) or "result" not in reply:
+            raise NotAnkiConnectError(f"{self.url} is not AnkiConnect")
         error = reply.get("error")
         if error is not None:
             if DUPLICATE_MARKER in str(error):

@@ -25,6 +25,7 @@ from typki.ui.capture import CapturePage
 from typki.ui.global_page import GlobalPage
 from typki.ui.main_window import MainWindow
 from typki.ui.save_queue import SaveQueue
+from typki.ui.setup_page import INSTALL_STEPS, UPDATE_STEPS
 from typki.ui.shortcuts import SHORTCUT_ACTIONS
 
 WAIT_MS = 10000
@@ -35,7 +36,9 @@ def raise_error(error: Exception) -> None:
     raise error
 
 
-def build_window(service: CardService, gateway: AnkiConnectGateway, state_dir: Path) -> MainWindow:
+def build_window(
+    service: CardService, gateway: AnkiConnectGateway, state_dir: Path, show_setup: bool = False
+) -> MainWindow:
     render_runner = TaskRunner(1, raise_error)
     anki_runner = TaskRunner(2, raise_error)
     save_queue = SaveQueue(service, anki_runner, Outbox(state_dir / "outbox"))
@@ -44,7 +47,17 @@ def build_window(service: CardService, gateway: AnkiConnectGateway, state_dir: P
     global_page = GlobalPage(service, render_runner)
     shortcuts = {action.key: action.default for action in SHORTCUT_ACTIONS}
     return MainWindow(
-        gateway, service, capture, browser, global_page, save_queue, anki_runner, render_runner, shortcuts, []
+        gateway,
+        service,
+        capture,
+        browser,
+        global_page,
+        save_queue,
+        anki_runner,
+        render_runner,
+        shortcuts,
+        [],
+        show_setup,
     )
 
 
@@ -384,3 +397,60 @@ def test_draft_restores_after_restart(
     assert restored is not None
     assert restored.front == "unsaved thought"
     assert restored.source_id == window.capture.source_id
+
+
+def test_first_run_shows_setup_until_anki_answers(
+    qtbot: QtBot, service: CardService, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki], tmp_path: Path
+) -> None:
+    gateway, _ = fake_ankiconnect
+    live_url = gateway.url
+    gateway.url = DEAD_URL
+    main_window = build_window(service, gateway, tmp_path / "state", show_setup=True)
+    qtbot.addWidget(main_window)
+    connections: list[bool] = []
+    main_window.connected.connect(lambda: connections.append(True))
+    main_window.capture.restore(None)
+    main_window.show()
+    qtbot.waitUntil(main_window.reconnect_timer.isActive, timeout=WAIT_MS)
+    assert main_window.setup_visible
+    assert main_window.setup_page.shown_steps == INSTALL_STEPS
+    assert main_window.setup_page.code_row.isVisible()
+    gateway.url = live_url
+    qtbot.waitUntil(lambda: main_window.anki_connected, timeout=WAIT_MS)
+    assert not main_window.setup_visible
+    assert connections
+    settle(main_window)
+
+
+def test_setup_explains_outdated_ankiconnect_and_can_be_skipped(
+    qtbot: QtBot,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway, _ = fake_ankiconnect
+    monkeypatch.setattr(gateway, "version", lambda: 5)
+    main_window = build_window(service, gateway, tmp_path / "state", show_setup=True)
+    qtbot.addWidget(main_window)
+    main_window.capture.restore(None)
+    main_window.show()
+    qtbot.waitUntil(lambda: main_window.setup_page.shown_steps == UPDATE_STEPS, timeout=WAIT_MS)
+    assert not main_window.setup_page.code_row.isVisible()
+    qtbot.keyClick(main_window.setup_page, Qt.Key.Key_Escape)
+    assert not main_window.setup_visible
+    settle(main_window)
+
+
+def test_setup_stays_hidden_when_anki_is_already_running(
+    qtbot: QtBot, service: CardService, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki], tmp_path: Path
+) -> None:
+    gateway, _ = fake_ankiconnect
+    main_window = build_window(service, gateway, tmp_path / "state", show_setup=True)
+    qtbot.addWidget(main_window)
+    main_window.capture.restore(None)
+    main_window.show()
+    qtbot.waitUntil(lambda: main_window.anki_connected, timeout=WAIT_MS)
+    assert not main_window.setup_visible
+    assert not main_window.offer_setup
+    settle(main_window)

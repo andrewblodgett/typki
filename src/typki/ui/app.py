@@ -23,6 +23,7 @@ from typki.ui.shortcuts import load_shortcuts
 
 APP_NAME = "typki"
 LIBRARY_SETTING = "library_path"
+ANKI_SEEN_SETTING = "anki_connected_once"
 DEFAULT_LIBRARY = Path.home() / "typki-library"
 DRAFT_FILENAME = "draft.json"
 OUTBOX_DIRNAME = "outbox"
@@ -95,7 +96,9 @@ def main(argv: list[str] | None = None) -> int:
             render_runner,
             shortcuts,
             shortcut_problems,
+            show_setup=not arguments.fake_anki and not settings.value(ANKI_SEEN_SETTING, False, bool),
         )
+        window.connected.connect(lambda: settings.setValue(ANKI_SEEN_SETTING, True))
         capture.restore(draft_store.load())
         window.show()
         return app.exec()

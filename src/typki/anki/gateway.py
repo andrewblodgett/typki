@@ -14,6 +14,14 @@ class DuplicateNoteError(AnkiError):
     pass
 
 
+class NotAnkiConnectError(AnkiError):
+    pass
+
+
+class AnkiConnectTooOldError(AnkiError):
+    pass
+
+
 @dataclass(frozen=True)
 class NewNote:
     deck_name: str
