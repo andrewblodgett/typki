@@ -35,8 +35,7 @@ class DiagnosticsList(QListWidget):
         self.recolor()
         self.setVisible(bool(entries))
         rows_height = sum(self.sizeHintForRow(index) for index in range(self.count()))
-        chrome_height = self.height() - self.viewport().height()
-        self.setFixedHeight(min(rows_height + chrome_height, self.maximum_height))
+        self.setFixedHeight(min(rows_height + 2 * self.frameWidth(), self.maximum_height))
 
     def set_theme(self, theme: Theme) -> None:
         self.theme = theme

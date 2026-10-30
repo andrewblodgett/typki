@@ -1,6 +1,7 @@
 import os
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,6 +20,7 @@ from typki.anki.fake_anki import FakeAnki
 from typki.card_service import CardService
 from typki.domain.card import CardDraft
 from typki.library.outbox import Outbox
+from typki.render.diagnostics import Diagnostic
 from typki.ui.editor import TypstEditor
 from typki.ui.main_window import MainWindow
 from typki.ui.setup_page import INSTALL_STEPS, UPDATE_STEPS
@@ -621,3 +623,13 @@ def test_unfilled_template_blocks_switching_but_blank_card_does_not(window: Main
     capture.back_editor.clear()
     capture.new_card()
     assert capture.back_editor.toPlainText() == ""
+
+
+def test_diagnostics_list_resizes_without_qt_warnings(window: MainWindow, qtlog: Any) -> None:
+    error = Diagnostic("error", "boom", (), None, 1, 1)
+    for diagnostics in (window.capture.diagnostics_list, window.global_page.diagnostics_list):
+        for entries in ([("a", error, None), ("b", error, None)], [], [("c", error, None)]):
+            diagnostics.show_entries(entries)
+            QApplication.processEvents()
+        assert diagnostics.height() > diagnostics.sizeHintForRow(0)
+    assert not [record for record in qtlog.records if "Negative sizes" in record.message]
