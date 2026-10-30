@@ -66,49 +66,10 @@ class Lexed:
         return mode
 
 
-KEYWORDS = frozenset(
-    {
-        "let",
-        "set",
-        "show",
-        "if",
-        "else",
-        "for",
-        "in",
-        "while",
-        "import",
-        "include",
-        "context",
-        "return",
-        "break",
-        "continue",
-        "as",
-        "not",
-        "and",
-        "or",
-        "none",
-        "auto",
-        "true",
-        "false",
-    }
-)
-STATEMENT_KEYWORDS = frozenset(
-    {
-        "let",
-        "set",
-        "show",
-        "if",
-        "for",
-        "while",
-        "import",
-        "include",
-        "context",
-        "return",
-        "break",
-        "continue",
-    }
-)
-
+DECLARATION_KEYWORDS = frozenset({"let", "set", "show", "import", "include", "context"})
+CONTROL_KEYWORDS = frozenset({"if", "for", "while", "return", "break", "continue"})
+STATEMENT_KEYWORDS = DECLARATION_KEYWORDS | CONTROL_KEYWORDS
+KEYWORDS = STATEMENT_KEYWORDS | {"else", "in", "as", "not", "and", "or", "none", "auto", "true", "false"}
 CODE_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 MATH_IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*")
 NUMBER = re.compile(r"(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?(?:pt|mm|cm|in|em|fr|deg|rad|%)?")

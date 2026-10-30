@@ -1,24 +1,18 @@
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (
-    QApplication,
-    QListWidget,
-    QListWidgetItem,
-    QSplitter,
-    QVBoxLayout,
-    QWidget,
-)
+from collections.abc import Callable
+
+from PySide6.QtWidgets import QApplication, QWidget
 
 from typki.card_service import CardRender, CardService
 from typki.render.diagnostics import HEADER_FILE_LABEL, Diagnostic
-from typki.ui.background import TaskRunner
+from typki.ui.background import CoalescingTask, TaskRunner, debouncer
+from typki.ui.diagnostics_list import DiagnosticsList
 from typki.ui.editor import TypstEditor
+from typki.ui.layout import panel, split_page
 from typki.ui.preview import CardPreview
-from typki.ui.theme import DEFAULT_THEME, Theme
+from typki.ui.theme import Theme
 
 WRITE_DEBOUNCE_MS = 250
-DIAGNOSTIC_ROLE = Qt.ItemDataRole.UserRole
-EQUAL_SPLIT = 100_000
+DIAGNOSTICS_HEIGHT = 100
 
 SAMPLE_FRONT = "*Define* a compact set $K subset RR$."
 SAMPLE_BACK = """$K$ is *compact* if every open cover of $K$ has a finite subcover:
@@ -34,45 +28,22 @@ class GlobalPage(QWidget):
     ) -> None:
         super().__init__(parent)
         self.service = service
-        self.render_runner = render_runner
         self.sample_front = SAMPLE_FRONT
         self.sample_back = SAMPLE_BACK
         self.loading = False
         self.write_pending = False
-        self.render_in_flight = False
-        self.render_pending = False
-        self.theme = DEFAULT_THEME
 
         self.header_editor = TypstEditor()
-        self.diagnostics_list = QListWidget()
-        self.diagnostics_list.setObjectName("diagnostics")
-        self.diagnostics_list.setMaximumHeight(100)
-        self.diagnostics_list.setVisible(False)
+        self.diagnostics_list = DiagnosticsList(DIAGNOSTICS_HEIGHT)
         self.preview = CardPreview()
+        split_page(self, panel((self.header_editor, 1), self.diagnostics_list), self.preview)
 
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(8)
-        left_layout.addWidget(self.header_editor, 1)
-        left_layout.addWidget(self.diagnostics_list)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(16)
-        splitter.addWidget(left)
-        splitter.addWidget(self.preview)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([EQUAL_SPLIT, EQUAL_SPLIT])
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 4)
-        layout.addWidget(splitter, 1)
-
-        self.write_timer = QTimer(self, singleShot=True, interval=WRITE_DEBOUNCE_MS)
-        self.write_timer.timeout.connect(self.flush_writes)
+        self.render_task = CoalescingTask(
+            render_runner, self.render_job, self.on_rendered, self.on_render_crashed
+        )
+        self.write_timer = debouncer(self, WRITE_DEBOUNCE_MS, self.flush_writes)
         self.header_editor.textChanged.connect(self.on_header_edited)
-        self.diagnostics_list.itemActivated.connect(self.on_diagnostic_activated)
-        self.diagnostics_list.itemClicked.connect(self.on_diagnostic_activated)
-
+        self.diagnostics_list.revealed.connect(self.reveal_diagnostic)
         self.reload_from_disk()
 
     def set_sample(self, front: str, back: str) -> None:
@@ -106,33 +77,19 @@ class GlobalPage(QWidget):
     def on_library_changed(self) -> None:
         if self.write_pending:
             return
-        focused = QApplication.focusWidget()
-        if self.isActiveWindow() and focused is self.header_editor:
+        if self.isActiveWindow() and QApplication.focusWidget() is self.header_editor:
             self.request_render()
         else:
             self.reload_from_disk()
 
     def request_render(self) -> None:
-        if self.render_in_flight:
-            self.render_pending = True
-            return
-        self.render_in_flight = True
-        front, back = self.sample_front, self.sample_back
-        self.render_runner.run(
-            lambda: self.service.render(front, back), self.on_rendered, self.on_render_crashed
-        )
+        self.render_task.request()
 
-    def finish_render_cycle(self) -> bool:
-        self.render_in_flight = False
-        if self.render_pending:
-            self.render_pending = False
-            self.request_render()
-            return False
-        return True
+    def render_job(self) -> Callable[[], CardRender]:
+        front, back = self.sample_front, self.sample_back
+        return lambda: self.service.render(front, back)
 
     def on_rendered(self, card_render: CardRender) -> None:
-        if not self.finish_render_cycle():
-            return
         self.preview.set_side("front", card_render.front.svg, not card_render.front.ok)
         self.preview.set_side("back", card_render.back.svg, not card_render.back.ok)
         diagnostics = list(card_render.front.diagnostics)
@@ -140,37 +97,22 @@ class GlobalPage(QWidget):
         self.show_diagnostics(diagnostics)
 
     def on_render_crashed(self, error: Exception) -> None:
-        if self.finish_render_cycle():
-            self.show_diagnostics([Diagnostic("error", str(error))])
+        self.show_diagnostics([Diagnostic("error", str(error))])
 
     def show_diagnostics(self, diagnostics: list[Diagnostic]) -> None:
-        self.diagnostics_list.clear()
-        header_diagnostics = [d for d in diagnostics if d.file == HEADER_FILE_LABEL]
         self.header_editor.show_diagnostics(
-            [Diagnostic(d.severity, d.message, d.hints, None, d.line, d.column) for d in header_diagnostics]
+            [
+                Diagnostic(d.severity, d.message, d.hints, None, d.line, d.column)
+                for d in diagnostics
+                if d.file == HEADER_FILE_LABEL
+            ]
         )
-        for diagnostic in diagnostics:
-            item = QListWidgetItem(diagnostic.describe())
-            item.setData(DIAGNOSTIC_ROLE, diagnostic)
-            if diagnostic.hints:
-                item.setToolTip("\n".join(diagnostic.hints))
-            color = self.theme.error if diagnostic.severity == "error" else self.theme.warning
-            item.setForeground(QColor(color))
-            self.diagnostics_list.addItem(item)
-        self.diagnostics_list.setVisible(bool(diagnostics))
-
-    def on_diagnostic_activated(self, item: QListWidgetItem) -> None:
-        self.reveal_diagnostic(item.data(DIAGNOSTIC_ROLE))
+        self.diagnostics_list.show_entries([(d.describe(), d, d) for d in diagnostics])
 
     def reveal_diagnostic(self, diagnostic: Diagnostic) -> None:
         if diagnostic.file == HEADER_FILE_LABEL and diagnostic.line is not None:
             self.header_editor.jump_to(diagnostic.line, diagnostic.column or 1)
 
     def set_theme(self, theme: Theme) -> None:
-        self.theme = theme
-        self.header_editor.set_theme(theme)
-        self.preview.set_theme(theme)
-        for row in range(self.diagnostics_list.count()):
-            item = self.diagnostics_list.item(row)
-            diagnostic = item.data(DIAGNOSTIC_ROLE)
-            item.setForeground(QColor(theme.error if diagnostic.severity == "error" else theme.warning))
+        for themed in (self.header_editor, self.preview, self.diagnostics_list):
+            themed.set_theme(theme)

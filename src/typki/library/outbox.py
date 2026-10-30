@@ -1,10 +1,7 @@
-import json
-from dataclasses import asdict
 from pathlib import Path
 
 from typki.domain.card import CardDraft
-from typki.library.drafts import draft_from_dict
-from typki.library.store import write_text_atomically
+from typki.library.drafts import read_draft, write_draft
 
 
 class Outbox:
@@ -15,22 +12,17 @@ class Outbox:
         return self.directory / f"{source_id}.json"
 
     def put(self, draft: CardDraft) -> None:
-        write_text_atomically(self.path_for(draft.source_id), json.dumps(asdict(draft), ensure_ascii=False))
+        write_draft(self.path_for(draft.source_id), draft)
 
     def remove(self, source_id: str) -> None:
         self.path_for(source_id).unlink(missing_ok=True)
 
+    def paths(self) -> list[Path]:
+        return list(self.directory.glob("*.json")) if self.directory.is_dir() else []
+
     def drafts(self) -> list[CardDraft]:
-        if not self.directory.is_dir():
-            return []
-        paths = sorted(self.directory.glob("*.json"), key=lambda path: path.stat().st_mtime)
-        drafts = []
-        for path in paths:
-            try:
-                drafts.append(draft_from_dict(json.loads(path.read_text(encoding="utf-8"))))
-            except OSError, ValueError, KeyError, TypeError:
-                continue
-        return drafts
+        paths = sorted(self.paths(), key=lambda path: path.stat().st_mtime)
+        return [draft for draft in map(read_draft, paths) if draft is not None]
 
     def count(self) -> int:
-        return len(list(self.directory.glob("*.json"))) if self.directory.is_dir() else 0
+        return len(self.paths())

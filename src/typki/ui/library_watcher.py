@@ -1,6 +1,7 @@
-from PySide6.QtCore import QFileSystemWatcher, QObject, QTimer, Signal
+from PySide6.QtCore import QFileSystemWatcher, QObject, Signal
 
 from typki.library.store import Library
+from typki.ui.background import debouncer
 
 CHANGE_DEBOUNCE_MS = 150
 
@@ -12,8 +13,7 @@ class LibraryWatcher(QObject):
         super().__init__(parent)
         self.library = library
         self.watcher = QFileSystemWatcher(self)
-        self.debounce = QTimer(self, singleShot=True, interval=CHANGE_DEBOUNCE_MS)
-        self.debounce.timeout.connect(self.emit_change)
+        self.debounce = debouncer(self, CHANGE_DEBOUNCE_MS, self.emit_change)
         self.watcher.fileChanged.connect(self.on_raw_change)
         self.watcher.directoryChanged.connect(self.on_raw_change)
         self.refresh_paths()

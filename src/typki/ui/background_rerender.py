@@ -1,9 +1,10 @@
 import threading
+from collections.abc import Callable
 
 from PySide6.QtCore import QObject, Signal
 
 from typki.rerender.runner import Rerenderer, RerenderProgress, RerenderReport
-from typki.ui.background import TaskRunner
+from typki.ui.background import CoalescingTask, TaskRunner
 
 
 class BackgroundRerender(QObject):
@@ -13,24 +14,20 @@ class BackgroundRerender(QObject):
     def __init__(self, rerenderer: Rerenderer, runner: TaskRunner, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.rerenderer = rerenderer
-        self.runner = runner
-        self.running = False
-        self.pending = False
         self.cancel = threading.Event()
-        self.done = 0
-        self.total = 0
-        self.failed = 0
+        self.done = self.total = self.failed = 0
+        self.task = CoalescingTask(
+            runner, self.make_job, self.on_finished, lambda _error: self.on_finished(None)
+        )
         self.progressed.connect(self.on_progress)
 
     def request(self) -> None:
-        if self.running:
-            self.pending = True
-            self.cancel.set()
-            return
-        self.running = True
-        self.cancel = threading.Event()
-        cancel = self.cancel
-        self.runner.run(lambda: self.run_job(cancel), self.on_finished, lambda _error: self.on_finished(None))
+        self.cancel.set()
+        self.task.request()
+
+    def make_job(self) -> Callable[[], RerenderReport | None]:
+        self.cancel = cancel = threading.Event()
+        return lambda: self.run_job(cancel)
 
     def run_job(self, cancel: threading.Event) -> RerenderReport | None:
         stale = self.rerenderer.staleness().stale_note_ids
@@ -43,13 +40,9 @@ class BackgroundRerender(QObject):
         self.state_changed.emit()
 
     def on_finished(self, report: RerenderReport | None) -> None:
-        self.running = False
         self.done = self.total = 0
-        if report is not None and not report.cancelled:
-            self.failed = len(report.failures)
-        elif report is None:
+        if report is None:
             self.failed = 0
+        elif not report.cancelled:
+            self.failed = len(report.failures)
         self.state_changed.emit()
-        if self.pending:
-            self.pending = False
-            self.request()

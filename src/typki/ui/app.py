@@ -9,17 +9,10 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from typki.anki.ankiconnect import DEFAULT_URL, AnkiConnectGateway
 from typki.anki.fake_anki import running_fake_ankiconnect
 from typki.card_service import CardService
-from typki.library.drafts import DraftStore
-from typki.library.outbox import Outbox
 from typki.library.store import Library
 from typki.render.compiler import Renderer
 from typki.typst_syntax.catalog import warm_catalog_in_background
-from typki.ui.background import TaskRunner
-from typki.ui.browser import BrowserPage
-from typki.ui.capture import CapturePage
-from typki.ui.global_page import GlobalPage
 from typki.ui.main_window import MainWindow
-from typki.ui.save_queue import SaveQueue
 from typki.ui.shortcuts import load_shortcuts
 from typki.ui.theme import apply_to_application, find_theme
 
@@ -28,8 +21,6 @@ LIBRARY_SETTING = "library_path"
 ANKI_SEEN_SETTING = "anki_connected_once"
 THEME_SETTING = "theme"
 DEFAULT_LIBRARY = Path.home() / "typki-library"
-DRAFT_FILENAME = "draft.json"
-OUTBOX_DIRNAME = "outbox"
 
 
 def parse_arguments(argv: list[str]) -> argparse.Namespace:
@@ -77,36 +68,13 @@ def main(argv: list[str] | None = None) -> int:
         renderer = Renderer(library.root, [library.fonts_dir])
         service = CardService(gateway, library, renderer)
         state_dir = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation))
-        draft_store = DraftStore(state_dir / DRAFT_FILENAME)
-        outbox = Outbox(state_dir / OUTBOX_DIRNAME)
-
-        def report_error(error: Exception) -> None:
-            print(f"typki: {error}", file=sys.stderr)
-
-        render_runner = TaskRunner(1, report_error)
-        anki_runner = TaskRunner(2, report_error)
         shortcuts, shortcut_problems = load_shortcuts(library.root)
-
-        save_queue = SaveQueue(service, anki_runner, outbox)
-        capture = CapturePage(service, render_runner, save_queue, draft_store)
-        browser = BrowserPage(service, anki_runner)
-        global_page = GlobalPage(service, render_runner)
+        first_run = not arguments.fake_anki and not settings.value(ANKI_SEEN_SETTING, False, bool)
         window = MainWindow(
-            gateway,
-            service,
-            capture,
-            browser,
-            global_page,
-            save_queue,
-            anki_runner,
-            render_runner,
-            shortcuts,
-            shortcut_problems,
-            show_setup=not arguments.fake_anki and not settings.value(ANKI_SEEN_SETTING, False, bool),
-            theme=theme,
+            gateway, service, state_dir, shortcuts, shortcut_problems, show_setup=first_run, theme=theme
         )
         window.theme_changed.connect(lambda name: settings.setValue(THEME_SETTING, name))
         window.connected.connect(lambda: settings.setValue(ANKI_SEEN_SETTING, True))
-        capture.restore(draft_store.load())
+        window.capture.restore(window.draft_store.load())
         window.show()
         return app.exec()

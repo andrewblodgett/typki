@@ -10,8 +10,7 @@ PREAMBLE_HASH = "PreambleHash"
 RENDERER_VERSION = "RendererVersion"
 FIELD_NAMES = (FRONT, BACK, FRONT_SOURCE, BACK_SOURCE, SOURCE_ID, PREAMBLE_HASH, RENDERER_VERSION)
 CARD_TEMPLATE_NAME = "Card 1"
-FRONT_TEMPLATE = "{{Front}}"
-BACK_TEMPLATE = "{{FrontSide}}\n<hr id=answer>\n{{Back}}"
+CARD_TEMPLATE = {"Front": "{{Front}}", "Back": "{{FrontSide}}\n<hr id=answer>\n{{Back}}"}
 
 CARD_CSS = """.card {
   font-family: sans-serif;
@@ -59,9 +58,8 @@ def diagnose_note_type(
     return NoteTypeHealth(
         exists=True,
         missing_fields=tuple(name for name in FIELD_NAMES if name not in field_names),
-        templates_differ=(
-            card_template.get("Front", "").strip() != FRONT_TEMPLATE
-            or card_template.get("Back", "").strip() != BACK_TEMPLATE
+        templates_differ=any(
+            card_template.get(side, "").strip() != expected for side, expected in CARD_TEMPLATE.items()
         ),
         styling_differs=styling.strip() != CARD_CSS.strip(),
     )

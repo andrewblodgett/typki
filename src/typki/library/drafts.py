@@ -12,13 +12,21 @@ class DraftStore:
         self.path = path
 
     def save(self, draft: CardDraft) -> None:
-        write_text_atomically(self.path, json.dumps(asdict(draft), ensure_ascii=False, indent=2))
+        write_draft(self.path, draft)
 
     def load(self) -> CardDraft | None:
-        try:
-            return draft_from_dict(json.loads(self.path.read_text(encoding="utf-8")))
-        except OSError, ValueError, KeyError, TypeError:
-            return None
+        return read_draft(self.path)
+
+
+def write_draft(path: Path, draft: CardDraft) -> None:
+    write_text_atomically(path, json.dumps(asdict(draft), ensure_ascii=False, indent=2))
+
+
+def read_draft(path: Path) -> CardDraft | None:
+    try:
+        return draft_from_dict(json.loads(path.read_text(encoding="utf-8")))
+    except OSError, ValueError, KeyError, TypeError:
+        return None
 
 
 def draft_from_dict(data: dict[str, Any]) -> CardDraft:

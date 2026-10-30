@@ -134,13 +134,10 @@ class AnkiConnectGateway:
             for note_id, fields in updates
         ]
         results = self.invoke("multi", actions=actions)
-        errors: list[str | None] = []
-        for result in results:
-            if isinstance(result, dict) and result.get("error") is not None:
-                errors.append(str(result["error"]))
-            else:
-                errors.append(None)
-        return errors
+        return [
+            str(result["error"]) if isinstance(result, dict) and result.get("error") is not None else None
+            for result in results
+        ]
 
     def update_note_tags(self, note_id: int, tags: tuple[str, ...]) -> None:
         self.invoke("updateNoteTags", note=note_id, tags=list(tags))

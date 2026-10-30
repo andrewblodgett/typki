@@ -18,14 +18,9 @@ from typki.anki.ankiconnect import AnkiConnectGateway
 from typki.anki.fake_anki import FakeAnki
 from typki.card_service import CardService
 from typki.domain.card import CardDraft
-from typki.library.drafts import DraftStore
 from typki.library.outbox import Outbox
-from typki.ui.background import TaskRunner
-from typki.ui.browser import BrowserPage
-from typki.ui.capture import CapturePage
-from typki.ui.global_page import GlobalPage
+from typki.ui.editor import TypstEditor
 from typki.ui.main_window import MainWindow
-from typki.ui.save_queue import SaveQueue
 from typki.ui.setup_page import INSTALL_STEPS, UPDATE_STEPS
 from typki.ui.shortcuts import SHORTCUT_ACTIONS
 from typki.ui.theme import find_theme
@@ -34,33 +29,11 @@ WAIT_MS = 10000
 DEAD_URL = "http://127.0.0.1:9"
 
 
-def raise_error(error: Exception) -> None:
-    raise error
-
-
 def build_window(
     service: CardService, gateway: AnkiConnectGateway, state_dir: Path, show_setup: bool = False
 ) -> MainWindow:
-    render_runner = TaskRunner(1, raise_error)
-    anki_runner = TaskRunner(2, raise_error)
-    save_queue = SaveQueue(service, anki_runner, Outbox(state_dir / "outbox"))
-    capture = CapturePage(service, render_runner, save_queue, DraftStore(state_dir / "draft.json"))
-    browser = BrowserPage(service, anki_runner)
-    global_page = GlobalPage(service, render_runner)
     shortcuts = {action.key: action.default for action in SHORTCUT_ACTIONS}
-    return MainWindow(
-        gateway,
-        service,
-        capture,
-        browser,
-        global_page,
-        save_queue,
-        anki_runner,
-        render_runner,
-        shortcuts,
-        [],
-        show_setup,
-    )
+    return MainWindow(gateway, service, state_dir, shortcuts, [], show_setup)
 
 
 def settle(window: MainWindow) -> None:
@@ -85,6 +58,12 @@ def window(
     qtbot.waitUntil(lambda: main_window.anki_connected, timeout=WAIT_MS)
     yield main_window
     settle(main_window)
+
+
+@pytest.fixture
+def editor(window: MainWindow) -> TypstEditor:
+    window.capture.front_editor.setFocus()
+    return window.capture.front_editor
 
 
 def type_card(window: MainWindow, deck: str, front: str, back: str = "") -> None:
@@ -192,7 +171,7 @@ def test_save_and_new_button_saves_and_resets(
 
 def test_clicking_deck_field_opens_deck_list(qtbot: QtBot, window: MainWindow) -> None:
     capture = window.capture
-    capture.set_deck_names(["Default", "Physics"])
+    capture.deck_combo.set_names(["Default", "Physics"])
     qtbot.mouseClick(capture.deck_combo.lineEdit(), Qt.MouseButton.LeftButton)
     qtbot.waitUntil(capture.deck_combo.view().isVisible, timeout=WAIT_MS)
     assert capture.deck_combo.findText("Physics") >= 0
@@ -528,9 +507,7 @@ def test_switching_theme_recolors_without_touching_sources(
     assert service.library.read_header() == header
 
 
-def test_typing_math_completes_functions_with_tab(qtbot: QtBot, window: MainWindow) -> None:
-    editor = window.capture.front_editor
-    editor.setFocus()
+def test_typing_math_completes_functions_with_tab(qtbot: QtBot, editor: TypstEditor) -> None:
     qtbot.keyClicks(editor, "$fr")
     assert editor.toPlainText() == "$fr$"
     popup = editor.completion_popup
@@ -546,9 +523,7 @@ def test_typing_math_completes_functions_with_tab(qtbot: QtBot, window: MainWind
     assert editor.textCursor().position() == len("$frac(a)$")
 
 
-def test_hash_completion_lists_header_macros(qtbot: QtBot, window: MainWindow) -> None:
-    editor = window.capture.front_editor
-    editor.setFocus()
+def test_hash_completion_lists_header_macros(qtbot: QtBot, editor: TypstEditor) -> None:
     qtbot.keyClicks(editor, "#def")
     popup = editor.completion_popup
     qtbot.waitUntil(popup.is_visible, timeout=WAIT_MS)
@@ -556,9 +531,7 @@ def test_hash_completion_lists_header_macros(qtbot: QtBot, window: MainWindow) -
     assert editor.toPlainText() == "#defn()"
 
 
-def test_escape_closes_completion_without_inserting(qtbot: QtBot, window: MainWindow) -> None:
-    editor = window.capture.front_editor
-    editor.setFocus()
+def test_escape_closes_completion_without_inserting(qtbot: QtBot, editor: TypstEditor) -> None:
     qtbot.keyClicks(editor, "$al")
     popup = editor.completion_popup
     qtbot.waitUntil(popup.is_visible, timeout=WAIT_MS)
@@ -567,9 +540,7 @@ def test_escape_closes_completion_without_inserting(qtbot: QtBot, window: MainWi
     assert editor.toPlainText() == "$al$"
 
 
-def test_editor_line_shortcuts(qtbot: QtBot, window: MainWindow) -> None:
-    editor = window.capture.front_editor
-    editor.setFocus()
+def test_editor_line_shortcuts(qtbot: QtBot, editor: TypstEditor) -> None:
     editor.setPlainText("first\nsecond")
     qtbot.keyClick(editor, Qt.Key.Key_Slash, Qt.KeyboardModifier.ControlModifier)
     assert editor.toPlainText() == "// first\nsecond"
@@ -585,8 +556,7 @@ def test_editor_line_shortcuts(qtbot: QtBot, window: MainWindow) -> None:
     assert editor.toPlainText() == "second"
 
 
-def test_matching_bracket_is_highlighted(qtbot: QtBot, window: MainWindow) -> None:
-    editor = window.capture.front_editor
+def test_matching_bracket_is_highlighted(editor: TypstEditor) -> None:
     editor.setPlainText("#f(x)")
     cursor = editor.textCursor()
     cursor.setPosition(3)
@@ -594,9 +564,7 @@ def test_matching_bracket_is_highlighted(qtbot: QtBot, window: MainWindow) -> No
     assert [selection.cursor.selectionStart() for selection in editor.bracket_selections] == [2, 4]
 
 
-def test_editing_after_astral_characters_keeps_text_intact(qtbot: QtBot, window: MainWindow) -> None:
-    editor = window.capture.front_editor
-    editor.setFocus()
+def test_editing_after_astral_characters_keeps_text_intact(qtbot: QtBot, editor: TypstEditor) -> None:
     editor.setPlainText("𝒜 😀 first\nsecond\nthird")
     cursor = editor.textCursor()
     cursor.movePosition(QTextCursor.MoveOperation.Down)

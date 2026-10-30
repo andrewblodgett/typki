@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 
 from typki.anki import note_type
 from typki.card_service import CardService, note_type_query, to_stored_card
-from typki.domain.card import CardDraft
 from typki.domain.preamble import Preamble
 from typki.render.diagnostics import Diagnostic
 from typki.render.plain_text import plain_text_from_source
@@ -98,16 +97,7 @@ class Rerenderer:
                 )
                 continue
             report.compiled.append(card.note_id)
-            draft = CardDraft(
-                deck_name=card.deck_name,
-                template_name="",
-                tags=card.tags,
-                front=card.front_source,
-                back=card.back_source,
-                source_id=card.source_id,
-                note_id=card.note_id,
-            )
-            updates.append((card.note_id, self.service.rendered_fields(draft, card_render)))
+            updates.append((card.note_id, self.service.rendered_fields(card.as_draft(), card_render)))
         if apply and updates:
             errors = self.service.gateway.update_many_note_fields(updates)
             for (note_id, _), error in zip(updates, errors, strict=True):

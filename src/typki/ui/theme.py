@@ -399,22 +399,21 @@ def first_installed_family(candidates: tuple[str, ...]) -> str | None:
     return next((family for family in candidates if family in installed), None)
 
 
-def ui_font() -> QFont:
-    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
-    family = first_installed_family(UI_FONT_FAMILIES)
+def preferred_font(fallback: QFontDatabase.SystemFont, families: tuple[str, ...], point_size: float) -> QFont:
+    font = QFontDatabase.systemFont(fallback)
+    family = first_installed_family(families)
     if family is not None:
         font.setFamily(family)
-    font.setPointSizeF(UI_FONT_POINT_SIZE)
+    font.setPointSizeF(point_size)
     return font
+
+
+def ui_font() -> QFont:
+    return preferred_font(QFontDatabase.SystemFont.GeneralFont, UI_FONT_FAMILIES, UI_FONT_POINT_SIZE)
 
 
 def code_font() -> QFont:
-    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-    family = first_installed_family(CODE_FONT_FAMILIES)
-    if family is not None:
-        font.setFamily(family)
-    font.setPointSizeF(CODE_FONT_POINT_SIZE)
-    return font
+    return preferred_font(QFontDatabase.SystemFont.FixedFont, CODE_FONT_FAMILIES, CODE_FONT_POINT_SIZE)
 
 
 def icon_directory() -> Path:
@@ -498,11 +497,12 @@ QListView#completions {{
 }}
 QListView#completions::item {{ padding: 4px 8px; border-radius: 6px; }}
 QListView#completions::item:selected {{ background: {theme.selection}; color: {theme.text}; }}
-QListWidget::item {{ padding: 10px; border-radius: 8px; color: {theme.muted}; }}
-QListWidget::item:selected {{ background: {theme.raised}; color: {theme.text}; }}
+QListWidget::item {{ padding: 10px; border-radius: 8px; }}
+QListWidget::item:selected {{ background: {theme.raised}; }}
 QListWidget::item:hover:!selected {{ background: {theme.raised}; }}
 QListWidget#cards {{ background: transparent; border: none; padding: 0; }}
 QListWidget#cards::item {{
+  color: {theme.muted};
   background: {theme.panel}; border: 1px solid {theme.panel}; border-radius: 12px; margin: 5px; padding: 6px;
 }}
 QListWidget#cards::item:hover {{ background: {theme.raised}; border-color: {theme.raised}; }}

@@ -1,5 +1,6 @@
 import zlib
 from collections.abc import Callable
+from functools import partial
 
 from PySide6.QtCore import QEvent, QModelIndex, QObject, QPersistentModelIndex, QSize, Qt
 from PySide6.QtGui import (
@@ -104,6 +105,17 @@ def placeholder_format_for(theme: Theme) -> QTextCharFormat:
 
 
 Span = tuple[int, int, QTextCharFormat]
+LineCommand = Callable[[str, int, int], Edit | None]
+LINE_COMMANDS: dict[str, LineCommand] = {
+    "Ctrl+/": editing.toggle_line_comment,
+    "Ctrl+Shift+K": editing.delete_lines,
+    "Alt+Up": partial(editing.move_lines, upward=True),
+    "Alt+Down": partial(editing.move_lines, upward=False),
+    "Alt+Shift+Up": partial(editing.duplicate_lines, upward=True),
+    "Alt+Shift+Down": partial(editing.duplicate_lines, upward=False),
+    "Ctrl+]": editing.indent_lines,
+    "Ctrl+[": editing.outdent_lines,
+}
 
 
 class TypstHighlighter(QSyntaxHighlighter):
@@ -254,25 +266,18 @@ class TypstEditor(QPlainTextEdit):
         self.diagnostic_selections: list[QTextEdit.ExtraSelection] = []
         self.bracket_selections: list[QTextEdit.ExtraSelection] = []
         self.completion_popup = CompletionPopup(self)
-        self.key_handlers: dict[str, Callable[[], None]] = {
-            key_name(sequence): handler
-            for sequence, handler in (
-                ("Ctrl+/", self.toggle_comment),
-                ("Ctrl+Shift+K", self.delete_lines),
-                ("Ctrl+L", self.select_lines),
-                ("Alt+Up", lambda: self.move_lines(upward=True)),
-                ("Alt+Down", lambda: self.move_lines(upward=False)),
-                ("Alt+Shift+Up", lambda: self.duplicate_lines(upward=True)),
-                ("Alt+Shift+Down", lambda: self.duplicate_lines(upward=False)),
-                ("Ctrl+]", self.indent_lines),
-                ("Ctrl+[", self.outdent_lines),
-                ("Ctrl+Shift+Return", self.insert_line_above),
-                ("Ctrl+Space", lambda: self.update_completion(explicit=True)),
-                ("Ctrl+Y", self.redo),
-                ("Home", lambda: self.smart_home(extend=False)),
-                ("Shift+Home", lambda: self.smart_home(extend=True)),
-            )
+        handlers: dict[str, Callable[[], None]] = {
+            sequence: partial(self.selection_edit, command) for sequence, command in LINE_COMMANDS.items()
         }
+        handlers |= {
+            "Ctrl+L": self.select_lines,
+            "Ctrl+Shift+Return": self.insert_line_above,
+            "Ctrl+Space": partial(self.update_completion, explicit=True),
+            "Ctrl+Y": self.redo,
+            "Home": partial(self.smart_home, extend=False),
+            "Shift+Home": partial(self.smart_home, extend=True),
+        }
+        self.key_handlers = {key_name(sequence): handler for sequence, handler in handlers.items()}
         self.cursorPositionChanged.connect(self.highlight_matching_brackets)
 
     def set_theme(self, theme: Theme) -> None:
@@ -357,17 +362,15 @@ class TypstEditor(QPlainTextEdit):
         else:
             self.completion_popup.hide()
 
-    def text_and_selection(self) -> tuple[str, int, int]:
-        text = self.toPlainText()
-        positions = TextPositions(text)
-        cursor = self.textCursor()
-        return text, positions.from_qt(cursor.selectionStart()), positions.from_qt(cursor.selectionEnd())
-
     def text_and_anchor(self) -> tuple[str, int, int]:
         text = self.toPlainText()
         positions = TextPositions(text)
         cursor = self.textCursor()
         return text, positions.from_qt(cursor.anchor()), positions.from_qt(cursor.position())
+
+    def text_and_selection(self) -> tuple[str, int, int]:
+        text, anchor, position = self.text_and_anchor()
+        return text, min(anchor, position), max(anchor, position)
 
     def select_range(self, anchor: int, position: int) -> None:
         positions = TextPositions(self.toPlainText())
@@ -410,28 +413,10 @@ class TypstEditor(QPlainTextEdit):
             self.replace_range(edit.start, edit.end, edit.replacement)
         self.select_range(edit.selection_start, edit.selection_end)
 
-    def selection_edit(self, operation: Callable[[str, int, int], Edit | None]) -> None:
+    def selection_edit(self, operation: LineCommand) -> None:
         edit = operation(*self.text_and_selection())
         if edit is not None:
             self.apply_edit(edit)
-
-    def toggle_comment(self) -> None:
-        self.selection_edit(editing.toggle_line_comment)
-
-    def delete_lines(self) -> None:
-        self.selection_edit(editing.delete_lines)
-
-    def indent_lines(self) -> None:
-        self.selection_edit(editing.indent_lines)
-
-    def outdent_lines(self) -> None:
-        self.selection_edit(editing.outdent_lines)
-
-    def move_lines(self, upward: bool) -> None:
-        self.selection_edit(lambda text, start, end: editing.move_lines(text, start, end, upward))
-
-    def duplicate_lines(self, upward: bool) -> None:
-        self.selection_edit(lambda text, start, end: editing.duplicate_lines(text, start, end, upward))
 
     def insert_line_above(self) -> None:
         text, _anchor, position = self.text_and_anchor()

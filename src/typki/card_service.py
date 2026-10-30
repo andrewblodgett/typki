@@ -103,13 +103,7 @@ class CardService:
             NOTE_TYPE_NAME,
             list(note_type.FIELD_NAMES),
             note_type.CARD_CSS,
-            [
-                {
-                    "Name": note_type.CARD_TEMPLATE_NAME,
-                    "Front": note_type.FRONT_TEMPLATE,
-                    "Back": note_type.BACK_TEMPLATE,
-                }
-            ],
+            [{"Name": note_type.CARD_TEMPLATE_NAME, **note_type.CARD_TEMPLATE}],
         )
 
     def repair_note_type(self, health: NoteTypeHealth) -> None:
@@ -119,15 +113,8 @@ class CardService:
         for field_name in health.missing_fields:
             self.gateway.add_model_field(NOTE_TYPE_NAME, field_name)
         if health.templates_differ:
-            self.gateway.update_model_templates(
-                NOTE_TYPE_NAME,
-                {
-                    note_type.CARD_TEMPLATE_NAME: {
-                        "Front": note_type.FRONT_TEMPLATE,
-                        "Back": note_type.BACK_TEMPLATE,
-                    }
-                },
-            )
+            templates = {note_type.CARD_TEMPLATE_NAME: note_type.CARD_TEMPLATE}
+            self.gateway.update_model_templates(NOTE_TYPE_NAME, templates)
         if health.styling_differs:
             self.gateway.update_model_styling(NOTE_TYPE_NAME, note_type.CARD_CSS)
 

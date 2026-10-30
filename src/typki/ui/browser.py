@@ -1,14 +1,15 @@
 from dataclasses import dataclass
 
-from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QImage, QKeyEvent, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu, QWidget
 
 from typki.anki.gateway import AnkiUnavailableError
 from typki.card_service import CardService, SearchResult
 from typki.render.svg_postprocess import svg_for_display
-from typki.ui.background import TaskRunner
+from typki.ui.background import TaskRunner, debouncer
+from typki.ui.layout import page
 
 THUMBNAIL_WIDTH = 320
 THUMBNAIL_MAX_HEIGHT = 150
@@ -87,14 +88,9 @@ class BrowserPage(QWidget):
         )
         self.results.setUniformItemSizes(True)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 4)
-        layout.setSpacing(8)
-        layout.addWidget(self.search_edit)
-        layout.addWidget(self.results, 1)
+        page(self, self.search_edit, (self.results, 1))
 
-        self.search_timer = QTimer(self, singleShot=True, interval=SEARCH_DEBOUNCE_MS)
-        self.search_timer.timeout.connect(self.refresh)
+        self.search_timer = debouncer(self, SEARCH_DEBOUNCE_MS, self.refresh)
         self.search_edit.textChanged.connect(self.search_timer.start)
         self.search_edit.returnPressed.connect(self.refresh)
         self.results.itemActivated.connect(self.on_item_activated)

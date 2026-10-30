@@ -2,7 +2,7 @@ import itertools
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal, Slot
 
 SuccessCallback = Callable[[Any], None]
 ErrorCallback = Callable[[Exception], None]
@@ -59,3 +59,44 @@ class TaskRunner(QObject):
 
     def wait(self, timeout_ms: int = 5000) -> bool:
         return self.pool.waitForDone(timeout_ms)
+
+
+class CoalescingTask:
+    def __init__(
+        self,
+        runner: TaskRunner,
+        make_job: Callable[[], Callable[[], Any]],
+        on_success: SuccessCallback,
+        on_error: ErrorCallback,
+    ) -> None:
+        self.runner = runner
+        self.make_job = make_job
+        self.on_success = on_success
+        self.on_error = on_error
+        self.in_flight = False
+        self.pending = False
+
+    def request(self) -> None:
+        if self.in_flight:
+            self.pending = True
+            return
+        self.in_flight = True
+        self.runner.run(
+            self.make_job(),
+            lambda result: self.finish(self.on_success, result),
+            lambda error: self.finish(self.on_error, error),
+        )
+
+    def finish(self, callback: Callable[[Any], None], payload: Any) -> None:
+        self.in_flight = False
+        if self.pending:
+            self.pending = False
+            self.request()
+        else:
+            callback(payload)
+
+
+def debouncer(parent: QObject, interval_ms: int, slot: Callable[[], None]) -> QTimer:
+    timer = QTimer(parent, singleShot=True, interval=interval_ms)
+    timer.timeout.connect(slot)
+    return timer

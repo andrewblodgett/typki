@@ -3,6 +3,7 @@ from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from typki.anki.gateway import AnkiConnectTooOldError, AnkiUnavailableError, NotAnkiConnectError
+from typki.ui.layout import column, filled, row
 from typki.ui.theme import Theme, code_font
 
 ANKICONNECT_CODE = "2055492159"
@@ -10,6 +11,9 @@ ANKI_DOWNLOAD_URL = "https://apps.ankiweb.net"
 TITLE_STYLE = "font-size: 22pt; font-weight: 600;"
 STEP_STYLE = "font-size: 12pt;"
 CODE_POINT_SIZE = 16
+STEP_SPACING = 14
+SECTION_SPACING = 24
+CODE_ROW_MARGINS = (28, 0, 0, 0)
 
 INSTALL_STEPS = (
     f'Open Anki. If you don\'t have it, get it from <a href="{ANKI_DOWNLOAD_URL}">apps.ankiweb.net</a>.',
@@ -43,8 +47,7 @@ class SetupPage(QWidget):
         super().__init__(parent)
         self.title = QLabel("Connect Typki to Anki")
         self.title.setStyleSheet(TITLE_STYLE)
-        self.steps_box = QVBoxLayout()
-        self.steps_box.setSpacing(14)
+        self.steps_box = column(spacing=STEP_SPACING)
         self.code_row = self.build_code_row()
         self.status = QLabel()
         self.offline_button = QPushButton("Continue offline")
@@ -52,20 +55,10 @@ class SetupPage(QWidget):
         self.offline_button.clicked.connect(self.dismissed)
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self.dismissed.emit)
 
-        column = QVBoxLayout()
-        column.setSpacing(24)
-        column.addWidget(self.title)
-        column.addLayout(self.steps_box)
-        column.addWidget(self.status)
-        column.addWidget(self.offline_button, 0, Qt.AlignmentFlag.AlignLeft)
-        centered = QHBoxLayout()
-        centered.addStretch(1)
-        centered.addLayout(column)
-        centered.addStretch(1)
-        layout = QVBoxLayout(self)
-        layout.addStretch(1)
-        layout.addLayout(centered)
-        layout.addStretch(2)
+        content = column(
+            self.title, self.steps_box, self.status, row(self.offline_button, 1), spacing=SECTION_SPACING
+        )
+        filled(QVBoxLayout(self), [1, row(1, content, 1), 2])
         self.shown_steps: tuple[str, ...] = ()
         self.show_error(None)
 
@@ -77,13 +70,9 @@ class SetupPage(QWidget):
         code.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.copy_button = QPushButton("Copy")
         self.copy_button.clicked.connect(self.copy_code)
-        row = QWidget()
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(28, 0, 0, 0)
-        row_layout.addWidget(code)
-        row_layout.addWidget(self.copy_button)
-        row_layout.addStretch(1)
-        return row
+        code_row = QWidget()
+        filled(QHBoxLayout(code_row), [code, self.copy_button, 1], margins=CODE_ROW_MARGINS)
+        return code_row
 
     def copy_code(self) -> None:
         clipboard = QGuiApplication.clipboard()
