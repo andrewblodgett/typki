@@ -15,9 +15,9 @@ from typki.render.compiler import Renderer
 from typki.ui.background import TaskRunner
 from typki.ui.browser import BrowserPage
 from typki.ui.capture import CapturePage
+from typki.ui.global_page import GlobalPage
 from typki.ui.main_window import MainWindow
 from typki.ui.shortcuts import load_shortcuts
-from typki.ui.style_page import StylePage
 
 APP_NAME = "typki"
 LIBRARY_SETTING = "library_path"
@@ -75,21 +75,20 @@ def main(argv: list[str] | None = None) -> int:
         render_runner = TaskRunner(1, report_error)
         anki_runner = TaskRunner(2, report_error)
         shortcuts, shortcut_problems = load_shortcuts(library.root)
-        _, deck_problems = library.deck_configs()
 
         capture = CapturePage(service, render_runner, anki_runner, draft_store)
         browser = BrowserPage(service, anki_runner)
-        style = StylePage(service, render_runner, anki_runner)
+        global_page = GlobalPage(service, render_runner, anki_runner)
         window = MainWindow(
             gateway,
             service,
             capture,
             browser,
-            style,
+            global_page,
             anki_runner,
             render_runner,
             shortcuts,
-            shortcut_problems + deck_problems,
+            shortcut_problems,
         )
         capture.restore(draft_store.load())
         window.show()

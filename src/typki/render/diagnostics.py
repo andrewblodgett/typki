@@ -6,7 +6,7 @@ from typing import Literal
 Severity = Literal["error", "warning"]
 
 IN_MEMORY_MAIN_SUFFIX = "__typst_py_bytes__.typ"
-PREAMBLE_FILE_LABEL = "preamble"
+HEADER_FILE_LABEL = "header.typ"
 BLOCK_START = re.compile(r"^(error|warning): (.*)$")
 LOCATION = re.compile(r"┌─ (.+):(\d+):(\d+)\s*$")
 HINT = re.compile(r"^\s*= hint: (.*)$")
@@ -91,7 +91,7 @@ def to_diagnostic(block: RawBlock, header_line_count: int, library_root: Path) -
         card_line = block.line - header_line_count
         if card_line < 1:
             return Diagnostic(
-                block.severity, block.message, hints, PREAMBLE_FILE_LABEL, block.line, block.column
+                block.severity, block.message, hints, HEADER_FILE_LABEL, block.line, block.column
             )
         return Diagnostic(block.severity, block.message, hints, None, card_line, block.column)
     return Diagnostic(

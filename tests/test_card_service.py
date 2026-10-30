@@ -128,7 +128,7 @@ def test_open_detects_drift_from_edits_made_in_anki(
 
 def test_open_reports_stale_after_macro_change(service: CardService) -> None:
     note_id = service.save(make_draft()).note_id
-    (service.library.root / "decks/real-analysis/macros.typ").write_text("#let changed = 1\n")
+    service.library.write_header(service.library.read_header() + "#let changed = 1\n")
     opened = service.open(note_id)
     assert opened.stale
     assert not opened.drifted
@@ -170,7 +170,7 @@ def test_search_lists_newest_first_with_staleness(service: CardService) -> None:
     assert result.total == 2
     assert [summary.card.note_id for summary in result.cards] == [second, first]
     assert not any(summary.stale for summary in result.cards)
-    (service.library.root / "global/macros.typ").write_text("#let RRR = 2\n")
+    service.library.write_header(service.library.read_header() + "#let changed = 2\n")
     assert all(summary.stale for summary in service.search("").cards)
 
 

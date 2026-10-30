@@ -47,29 +47,26 @@ def group_text(group: FailureGroup) -> str:
 
 class RerenderDialog(QDialog):
     open_requested = Signal(object)
-    diagnostic_requested = Signal(object, object)
+    diagnostic_requested = Signal(object)
     finished_updating = Signal()
 
     def __init__(
         self,
         rerenderer: Rerenderer,
         runner: TaskRunner,
-        root_deck: str | None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.rerenderer = rerenderer
         self.runner = runner
-        self.root_deck = root_deck
         self.stale_note_ids: tuple[int, ...] = ()
         self.cancel_event = threading.Event()
         self.relay = ProgressRelay(self)
         self.relay.progress.connect(self.on_progress)
-        scope = f"“{root_deck}” and its subdecks" if root_deck else "all decks"
-        self.setWindowTitle(f"Re-render {scope}")
+        self.setWindowTitle("Re-render cards")
         self.resize(640, 420)
 
-        self.message = QLabel(f"Checking which cards in {scope} need re-rendering…")
+        self.message = QLabel("Checking which cards need re-rendering…")
         self.message.setWordWrap(True)
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)
@@ -97,7 +94,7 @@ class RerenderDialog(QDialog):
         self.apply_button.clicked.connect(self.apply)
         self.cancel_button.clicked.connect(self.cancel_event.set)
         self.failures.itemActivated.connect(self.on_failure_activated)
-        self.runner.run(lambda: self.rerenderer.staleness(self.root_deck), self.on_staleness, self.on_error)
+        self.runner.run(self.rerenderer.staleness, self.on_staleness, self.on_error)
 
     def on_staleness(self, report: StalenessReport) -> None:
         self.stale_note_ids = report.stale_note_ids
@@ -189,7 +186,7 @@ class RerenderDialog(QDialog):
     def on_failure_activated(self, item: QListWidgetItem) -> None:
         group: FailureGroup = item.data(GROUP_ROLE)
         if group.diagnostic is not None:
-            self.diagnostic_requested.emit(group.failures[0].deck_name, group.diagnostic)
+            self.diagnostic_requested.emit(group.diagnostic)
         else:
             self.open_requested.emit(group.failures[0].note_id)
 

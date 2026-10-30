@@ -5,8 +5,9 @@ from typki.anki.gateway import AnkiError, AnkiGateway, NewNote, NoteRecord
 from typki.anki.note_type import NOTE_TYPE_NAME, NoteTypeHealth, diagnose_note_type
 from typki.anki.search import quoted_term
 from typki.domain.card import CardDraft, StoredCard
+from typki.domain.preamble import Preamble
 from typki.domain.staleness import is_stale
-from typki.library.store import Library, ResolvedDeck
+from typki.library.store import Library
 from typki.render.compiler import Renderer, SideRender
 
 DEFAULT_SEARCH_LIMIT = 100
@@ -135,20 +136,24 @@ class CardService:
         if health.styling_differs:
             self.gateway.update_model_styling(NOTE_TYPE_NAME, note_type.CARD_CSS)
 
-    def render(self, deck_name: str, front_source: str, back_source: str) -> CardRender:
-        resolved = self.library.resolve_deck(deck_name)
-        return self.render_with(resolved, front_source, back_source)
+    def render(self, front_source: str, back_source: str) -> CardRender:
+        return self.render_with(self.library.preamble(), front_source, back_source)
 
-    def render_with(self, resolved: ResolvedDeck, front_source: str, back_source: str) -> CardRender:
+    def render_with(self, preamble: Preamble, front_source: str, back_source: str) -> CardRender:
         return CardRender(
-            front=self.renderer.render_side(front_source, resolved.preamble),
-            back=self.renderer.render_side(back_source, resolved.preamble),
-            preamble_hash=resolved.preamble.hash,
+            front=self.renderer.render_side(front_source, preamble),
+            back=self.renderer.render_side(back_source, preamble),
+            preamble_hash=preamble.hash,
             renderer_version=self.renderer.renderer_version,
         )
 
+    def is_stale(self, card: StoredCard, preamble: Preamble) -> bool:
+        return is_stale(
+            card.preamble_hash, card.renderer_version, preamble.hash, self.renderer.renderer_version
+        )
+
     def save(self, draft: CardDraft) -> SaveResult:
-        card_render = self.render(draft.deck_name, draft.front, draft.back)
+        card_render = self.render(draft.front, draft.back)
         if not card_render.ok:
             raise RenderFailedError(card_render)
         fields = self.rendered_fields(draft, card_render)
@@ -213,33 +218,19 @@ class CardService:
 
     def open(self, note_id: int) -> OpenedCard:
         card = to_stored_card(self.require_typki_record(note_id))
-        resolved = self.library.resolve_deck(card.deck_name)
-        stale = is_stale(
-            card.preamble_hash,
-            card.renderer_version,
-            resolved.preamble.hash,
-            self.renderer.renderer_version,
-        )
-        if stale:
+        preamble = self.library.preamble()
+        if self.is_stale(card, preamble):
             return OpenedCard(card=card, stale=True, drifted=False)
-        fresh = self.render_with(resolved, card.front_source, card.back_source)
+        fresh = self.render_with(preamble, card.front_source, card.back_source)
         drifted = fresh.ok and (fresh.front.svg != card.front_svg or fresh.back.svg != card.back_svg)
         return OpenedCard(card=card, stale=False, drifted=drifted)
 
     def search(self, query: str, limit: int = DEFAULT_SEARCH_LIMIT) -> SearchResult:
         note_ids = sorted(self.gateway.find_notes(f"{note_type_query()} {query}".strip()), reverse=True)
         records = self.gateway.notes_info(note_ids[:limit])
-        resolved_by_deck: dict[str, ResolvedDeck] = {}
-        summaries = []
-        for record in records:
-            card = to_stored_card(record)
-            if card.deck_name not in resolved_by_deck:
-                resolved_by_deck[card.deck_name] = self.library.resolve_deck(card.deck_name)
-            stale = is_stale(
-                card.preamble_hash,
-                card.renderer_version,
-                resolved_by_deck[card.deck_name].preamble.hash,
-                self.renderer.renderer_version,
-            )
-            summaries.append(CardSummary(card=card, stale=stale))
-        return SearchResult(cards=tuple(summaries), total=len(note_ids))
+        preamble = self.library.preamble()
+        summaries = tuple(
+            CardSummary(card=card, stale=self.is_stale(card, preamble))
+            for card in (to_stored_card(record) for record in records)
+        )
+        return SearchResult(cards=summaries, total=len(note_ids))

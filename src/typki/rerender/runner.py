@@ -5,17 +5,9 @@ from dataclasses import dataclass, field
 from typki.anki import note_type
 from typki.card_service import CardService, note_type_query, to_stored_card
 from typki.domain.card import CardDraft
-from typki.library.store import ResolvedDeck
 from typki.render.diagnostics import Diagnostic
 from typki.render.plain_text import plain_text_from_source
-from typki.rerender.plan import (
-    DeckStaleness,
-    StalenessReport,
-    chunked,
-    deck_notes_query,
-    decks_in_scope,
-    fresh_notes_query,
-)
+from typki.rerender.plan import StalenessReport, chunked, fresh_notes_query
 
 CHUNK_SIZE = 25
 
@@ -82,22 +74,17 @@ class Rerenderer:
     def __init__(self, service: CardService) -> None:
         self.service = service
 
-    def staleness(self, root_deck: str | None) -> StalenessReport:
+    def staleness(self) -> StalenessReport:
         gateway = self.service.gateway
         type_query = note_type_query()
+        note_ids = gateway.find_notes(type_query)
+        if not note_ids:
+            return StalenessReport(stale_note_ids=(), total=0)
+        preamble_hash = self.service.library.preamble().hash
         renderer_version = self.service.renderer.renderer_version
-        decks = []
-        for deck_name in decks_in_scope(gateway.deck_names(), root_deck):
-            note_ids = gateway.find_notes(deck_notes_query(type_query, deck_name))
-            if not note_ids:
-                continue
-            preamble_hash = self.service.library.resolve_deck(deck_name).preamble.hash
-            fresh = set(
-                gateway.find_notes(fresh_notes_query(type_query, deck_name, preamble_hash, renderer_version))
-            )
-            stale = tuple(sorted(note_id for note_id in note_ids if note_id not in fresh))
-            decks.append(DeckStaleness(deck_name, stale, len(note_ids)))
-        return StalenessReport(root_deck=root_deck, decks=tuple(decks))
+        fresh = set(gateway.find_notes(fresh_notes_query(type_query, preamble_hash, renderer_version)))
+        stale = tuple(sorted(note_id for note_id in note_ids if note_id not in fresh))
+        return StalenessReport(stale_note_ids=stale, total=len(note_ids))
 
     def run(
         self,
@@ -107,7 +94,7 @@ class Rerenderer:
         cancel: threading.Event | None = None,
     ) -> RerenderReport:
         report = RerenderReport(applied=apply)
-        resolved_by_deck: dict[str, ResolvedDeck] = {}
+        preamble = self.service.library.preamble()
         processed = 0
         for chunk in chunked(note_ids, CHUNK_SIZE):
             if cancel is not None and cancel.is_set():
@@ -119,11 +106,7 @@ class Rerenderer:
                     continue
                 card = to_stored_card(record)
                 report.checked += 1
-                if card.deck_name not in resolved_by_deck:
-                    resolved_by_deck[card.deck_name] = self.service.library.resolve_deck(card.deck_name)
-                card_render = self.service.render_with(
-                    resolved_by_deck[card.deck_name], card.front_source, card.back_source
-                )
+                card_render = self.service.render_with(preamble, card.front_source, card.back_source)
                 title = plain_text_from_source(card.front_source)[:80] or f"Note {card.note_id}"
                 if not card_render.ok:
                     report.failures.append(

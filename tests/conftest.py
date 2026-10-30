@@ -9,11 +9,8 @@ from typki.card_service import CardService
 from typki.library.store import Library
 from typki.render.compiler import Renderer
 
-DECK_TOML = """anki_deck = 'Real Analysis'
-page_width = '90mm'
-scale = 1.25
-default_template = 'definition'
-default_tags = ['real-analysis']
+TEST_MACROS = """#let RRR = $bb(R)$
+#let defn(term, body) = [*#term.* #body]
 """
 
 
@@ -21,12 +18,7 @@ default_tags = ['real-analysis']
 def library(tmp_path: Path) -> Library:
     store = Library(tmp_path / "library")
     store.ensure_layout()
-    (store.root / "global/macros.typ").write_text("#let RRR = $bb(R)$\n")
-    deck_dir = store.root / "decks/real-analysis"
-    deck_dir.mkdir(parents=True)
-    (deck_dir / "deck.toml").write_text(DECK_TOML)
-    (deck_dir / "macros.typ").write_text("#let defn(term, body) = [*#term.* #body]\n")
-    (deck_dir / "style.typ").write_text("#let card-style(body) = { set text(size: 12pt); body }\n")
+    store.write_header(store.read_header() + TEST_MACROS)
     return store
 
 
@@ -49,3 +41,8 @@ def service(
     card_service = CardService(gateway, library, renderer)
     card_service.create_note_type()
     return card_service
+
+
+def replace_defn(library: Library, definition: str) -> None:
+    lines = [line for line in library.read_header().splitlines() if not line.startswith("#let defn")]
+    library.write_header("\n".join(lines) + "\n" + definition + "\n")

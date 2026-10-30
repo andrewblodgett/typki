@@ -10,7 +10,7 @@ from typki.render.diagnostics import Diagnostic, parse_diagnostics
 from typki.render.plain_text import plain_text_from_source
 from typki.render.svg_postprocess import postprocess_svg
 
-RENDER_PIPELINE_VERSION = 2
+RENDER_PIPELINE_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -86,7 +86,7 @@ class Renderer:
         ]
         svg_bytes = first_page(output)
         return SideRender(
-            svg=postprocess_svg(svg_bytes, plain_text, preamble.scale),
+            svg=postprocess_svg(svg_bytes, plain_text),
             diagnostics=tuple(warning_diagnostics),
             plain_text=plain_text,
         )

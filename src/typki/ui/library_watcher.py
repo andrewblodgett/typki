@@ -19,7 +19,7 @@ class LibraryWatcher(QObject):
         self.refresh_paths()
 
     def refresh_paths(self) -> None:
-        wanted = {str(path) for path in self.library.watched_files() + self.library.watched_directories()}
+        wanted = {str(path) for path in self.library.watched_paths()}
         current = set(self.watcher.files()) | set(self.watcher.directories())
         stale = sorted(current - wanted)
         missing = sorted(wanted - current)

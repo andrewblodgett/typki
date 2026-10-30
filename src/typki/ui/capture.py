@@ -183,7 +183,6 @@ class CapturePage(QWidget):
         self.restoring = True
         if draft is None:
             self.deck_combo.setCurrentText(DEFAULT_DECK)
-            self.apply_deck_defaults()
             self.apply_template(self.template_key())
         else:
             self.deck_combo.setCurrentText(draft.deck_name)
@@ -210,12 +209,6 @@ class CapturePage(QWidget):
         self.front_editor.set_source(template.front)
         self.front_editor.setFocus()
 
-    def apply_deck_defaults(self) -> None:
-        config = self.service.library.resolve_deck(self.deck_name()).config
-        self.select_template_key(config.default_template)
-        if config.default_tags and not self.tags_edit.text().strip():
-            self.tags_edit.setText(" ".join(config.default_tags))
-
     def on_template_chosen(self, _index: int) -> None:
         if not self.is_pristine():
             answer = QMessageBox.question(
@@ -230,13 +223,7 @@ class CapturePage(QWidget):
         self.apply_template(self.template_key())
 
     def on_deck_changed(self, _text: str) -> None:
-        if self.restoring:
-            return
-        if self.note_id is None and self.is_pristine():
-            self.apply_deck_defaults()
-            self.apply_template(self.template_key())
         self.on_form_changed()
-        self.render_timer.start()
 
     def on_source_changed(self) -> None:
         self.render_timer.start()
@@ -254,11 +241,10 @@ class CapturePage(QWidget):
             self.render_pending = True
             return
         self.render_in_flight = True
-        deck_name = self.deck_name()
         front = self.front_editor.toPlainText()
         back = self.back_editor.toPlainText()
         self.render_runner.run(
-            lambda: self.service.render(deck_name, front, back),
+            lambda: self.service.render(front, back),
             self.on_rendered,
             self.on_render_crashed,
         )
