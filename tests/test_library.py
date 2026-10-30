@@ -2,6 +2,7 @@ from pathlib import Path
 
 from typki.domain.card import CardDraft
 from typki.domain.preamble import DEFAULT_HEADER
+from typki.launcher import APP_ID, install_launcher
 from typki.library.drafts import DraftStore
 from typki.library.outbox import Outbox
 from typki.library.store import Library
@@ -52,3 +53,13 @@ def test_outbox_keeps_latest_draft_per_card_in_order(tmp_path: Path) -> None:
     assert [draft.front for draft in outbox.drafts()] == ["second", "first edited"]
     outbox.remove(second.source_id)
     assert outbox.count() == 1
+
+
+def test_launcher_entry_points_at_executable_and_ships_icon(tmp_path: Path) -> None:
+    executable = tmp_path / "bin" / "typki"
+    entry, icon = install_launcher(executable, tmp_path / "share")
+    text = entry.read_text()
+    assert entry == tmp_path / "share" / "applications" / "typki.desktop"
+    assert f'Exec="{executable}"' in text
+    assert f"Icon={APP_ID}" in text and f"StartupWMClass={APP_ID}" in text
+    assert icon.read_text().startswith("<svg")

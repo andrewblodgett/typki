@@ -4,11 +4,13 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, QStandardPaths
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from typki.anki.ankiconnect import DEFAULT_URL, AnkiConnectGateway
 from typki.anki.fake_anki import running_fake_ankiconnect
 from typki.card_service import CardService
+from typki.launcher import APP_ID, ICON_PATH, install_launcher, user_data_dir
 from typki.library.store import Library
 from typki.render.compiler import Renderer
 from typki.typst_syntax.catalog import warm_catalog_in_background
@@ -28,6 +30,9 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--library", type=Path, help="library folder (remembered for next time)")
     parser.add_argument("--anki-url", default=DEFAULT_URL, help="AnkiConnect URL")
     parser.add_argument("--fake-anki", action="store_true", help="use an in-memory Anki for trying Typki out")
+    parser.add_argument(
+        "--install-launcher", action="store_true", help="add Typki to your desktop's app launcher"
+    )
     return parser.parse_args(argv)
 
 
@@ -45,9 +50,15 @@ def resolve_library_path(settings: QSettings, requested: Path | None) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parse_arguments(sys.argv[1:] if argv is None else argv)
+    if arguments.install_launcher:
+        for path in install_launcher(Path(sys.argv[0]).absolute(), user_data_dir()):
+            print(f"Wrote {path}")
+        return 0
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
+    app.setDesktopFileName(APP_ID)
+    app.setWindowIcon(QIcon(str(ICON_PATH)))
     settings = QSettings()
     theme = find_theme(settings.value(THEME_SETTING))
     apply_to_application(app, theme)
