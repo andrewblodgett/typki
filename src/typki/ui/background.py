@@ -17,11 +17,13 @@ class _Task(QRunnable):
 
     def run(self) -> None:
         try:
-            result = self.function()
+            outcome: tuple[bool, object] = (True, self.function())
         except Exception as error:
-            self.runner.finished.emit(self.task_id, False, error)
-        else:
-            self.runner.finished.emit(self.task_id, True, result)
+            outcome = (False, error)
+        try:
+            self.runner.finished.emit(self.task_id, *outcome)
+        except RuntimeError:
+            return
 
 
 class TaskRunner(QObject):

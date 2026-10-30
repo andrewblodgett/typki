@@ -16,6 +16,7 @@ from typki.anki import note_type
 from typki.anki.ankiconnect import AnkiConnectGateway
 from typki.anki.fake_anki import FakeAnki
 from typki.card_service import CardService
+from typki.domain.card import CardDraft
 from typki.library.drafts import DraftStore
 from typki.ui.background import TaskRunner
 from typki.ui.browser import BrowserPage
@@ -55,9 +56,10 @@ def window(
     main_window.show()
     qtbot.waitUntil(lambda: main_window.anki_connected, timeout=WAIT_MS)
     yield main_window
-    anki_runner.wait()
-    render_runner.wait()
-    QApplication.processEvents()
+    for _ in range(3):
+        anki_runner.wait()
+        render_runner.wait()
+        QApplication.processEvents()
 
 
 def type_card(window: MainWindow, deck: str, front: str, back: str) -> None:
@@ -83,7 +85,7 @@ def test_save_and_next_adds_note_and_resets_form(
     assert capture.note_id is None
     assert capture.source_id != first_source_id
     assert capture.deck_name() == "Real Analysis"
-    assert capture.front_editor.toPlainText() == capture.applied_template.front
+    assert (capture.front_editor.toPlainText(), capture.back_editor.toPlainText()) == capture.baseline
 
 
 def test_compile_error_is_listed_and_blocks_save(
@@ -138,7 +140,6 @@ def test_browse_search_and_open_for_editing(
     window.focus_search()
     browser = window.browser
     qtbot.keyClicks(browser.search_edit, "Bolzano")
-    qtbot.keyClick(browser.search_edit, Qt.Key.Key_Return)
     qtbot.waitUntil(lambda: browser.results.count() == 1, timeout=WAIT_MS)
     assert not browser.results.item(0).icon().isNull()
 
@@ -165,13 +166,13 @@ def test_drift_warning_can_cancel_open(
     warnings: list[str] = []
 
     def cancel(*args: object) -> QMessageBox.StandardButton:
-        warnings.append(str(args[1]))
+        warnings.append(str(args[2]))
         return QMessageBox.StandardButton.Cancel
 
     monkeypatch.setattr(QMessageBox, "warning", cancel)
     window.open_note(note.note_id)
     qtbot.waitUntil(lambda: bool(warnings), timeout=WAIT_MS)
-    assert warnings == ["Card changed outside Typki"]
+    assert warnings == ["This card was changed outside Typki. Saving will overwrite those changes."]
     assert capture.note_id is None
 
 
@@ -265,7 +266,7 @@ def test_rerender_dialog_blocks_broken_header(
     dialog = window.findChild(RerenderDialog)
     assert dialog is not None
     qtbot.waitUntil(lambda: dialog.failures.count() == 1, timeout=WAIT_MS)
-    assert "Affects 3 cards" in dialog.failures.item(0).text()
+    assert dialog.failures.item(0).text().endswith("3 cards")
     assert not dialog.apply_button.isVisible()
     assert {note_id: note.fields for note_id, note in fake.notes.items()} == before
     dialog.failures.itemActivated.emit(dialog.failures.item(0))
@@ -285,3 +286,53 @@ def test_external_header_edit_reloads_global_tab(
     qtbot.waitUntil(
         lambda: "#let external" in window.global_page.header_editor.toPlainText(), timeout=WAIT_MS
     )
+
+
+def test_browse_lists_newest_first_and_filters_as_you_type(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    _, fake = fake_ankiconnect
+    save_cards(qtbot, window, "Real Analysis", ["alpha card", "beta card", "gamma card"])
+    qtbot.waitUntil(lambda: len(fake.notes) == 3, timeout=WAIT_MS)
+    window.tabs.setCurrentIndex(1)
+    browser = window.browser
+    qtbot.waitUntil(lambda: browser.results.count() == 3, timeout=WAIT_MS)
+    newest = max(fake.notes)
+    assert browser.results.item(0).data(Qt.ItemDataRole.UserRole) == newest
+    qtbot.keyClicks(browser.search_edit, "beta")
+    qtbot.waitUntil(lambda: browser.results.count() == 1, timeout=WAIT_MS)
+
+
+def test_browse_loads_more_on_scroll(
+    qtbot: QtBot,
+    window: MainWindow,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+) -> None:
+    for index in range(95):
+        service.save(CardDraft("Real Analysis", "", (), f"card number {index}", "back"))
+    window.tabs.setCurrentIndex(1)
+    browser = window.browser
+    qtbot.waitUntil(lambda: browser.results.count() >= 40, timeout=WAIT_MS)
+    browser.results.scrollToBottom()
+    qtbot.waitUntil(lambda: browser.results.count() >= 80, timeout=WAIT_MS)
+    browser.results.scrollToBottom()
+    qtbot.waitUntil(lambda: browser.results.count() == 95, timeout=WAIT_MS)
+
+
+def test_header_templates_fill_front_and_clear_back(
+    qtbot: QtBot, window: MainWindow, service: CardService
+) -> None:
+    capture = window.capture
+    assert capture.template_combo.findData("theorem") >= 0
+    capture.back_editor.setPlainText("")
+    capture.front_editor.setPlainText("")
+    capture.template_combo.setCurrentIndex(capture.template_combo.findData("theorem"))
+    capture.template_combo.activated.emit(capture.template_combo.currentIndex())
+    assert capture.front_editor.toPlainText() == "#theorem[«name»][«statement»]"
+    assert capture.front_editor.textCursor().selectedText() == "«name»"
+    assert capture.back_editor.toPlainText() == ""
+    service.library.write_header(
+        service.library.read_header() + "#let lemma(statement) = [*Lemma.* #statement]\n"
+    )
+    qtbot.waitUntil(lambda: capture.template_combo.findData("lemma") >= 0, timeout=WAIT_MS)

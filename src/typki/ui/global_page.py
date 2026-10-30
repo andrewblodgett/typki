@@ -2,7 +2,6 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
-    QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -29,7 +28,6 @@ $ K subset.eq union.big_(i in I) U_i ==> K subset.eq U_(i_1) union dots.c union 
 
 
 class GlobalPage(QWidget):
-    status_message = Signal(str)
     rerender_requested = Signal()
 
     def __init__(
@@ -56,14 +54,12 @@ class GlobalPage(QWidget):
         self.diagnostics_list.setMaximumHeight(100)
         self.diagnostics_list.setVisible(False)
         self.preview = CardPreview()
-        self.stale_label = QLabel()
-        self.rerender_button = QPushButton("Re-render cards…")
-        self.rerender_button.setEnabled(False)
+        self.rerender_button = QPushButton()
+        self.rerender_button.setVisible(False)
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.addWidget(QLabel(f"{HEADER_FILE_LABEL}, placed before every card"))
         left_layout.addWidget(self.header_editor, 1)
         left_layout.addWidget(self.diagnostics_list)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -72,7 +68,7 @@ class GlobalPage(QWidget):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
         bottom = QHBoxLayout()
-        bottom.addWidget(self.stale_label, 1)
+        bottom.addStretch(1)
         bottom.addWidget(self.rerender_button)
         layout = QVBoxLayout(self)
         layout.addWidget(splitter, 1)
@@ -151,7 +147,6 @@ class GlobalPage(QWidget):
             return
         self.preview.set_side("front", card_render.front.svg, not card_render.front.ok)
         self.preview.set_side("back", card_render.back.svg, not card_render.back.ok)
-        self.preview.show_sizes(card_render.front.byte_size, card_render.back.byte_size)
         diagnostics = list(card_render.front.diagnostics)
         diagnostics += [d for d in card_render.back.diagnostics if d not in diagnostics]
         self.show_diagnostics(diagnostics)
@@ -167,8 +162,7 @@ class GlobalPage(QWidget):
             [Diagnostic(d.severity, d.message, d.hints, None, d.line, d.column) for d in header_diagnostics]
         )
         for diagnostic in diagnostics:
-            label = diagnostic.describe() if diagnostic.file else f"sample card: {diagnostic.describe()}"
-            item = QListWidgetItem(label)
+            item = QListWidgetItem(diagnostic.describe())
             item.setData(DIAGNOSTIC_ROLE, diagnostic)
             if diagnostic.hints:
                 item.setToolTip("\n".join(diagnostic.hints))
@@ -188,17 +182,10 @@ class GlobalPage(QWidget):
         self.anki_runner.run(
             self.rerenderer.staleness,
             self.on_staleness,
-            lambda _error: self.stale_label.setText(
-                "Anki is not reachable, so stale cards cannot be counted."
-            ),
+            lambda _error: self.rerender_button.setVisible(False),
         )
 
     def on_staleness(self, report: StalenessReport) -> None:
-        if report.total == 0:
-            text = "No Typki cards yet."
-        elif report.stale_count == 0:
-            text = f"All {report.total} cards use the current header."
-        else:
-            text = f"{report.stale_count} of {report.total} cards use an older header and need re-rendering."
-        self.stale_label.setText(text)
-        self.rerender_button.setEnabled(report.stale_count > 0)
+        count = report.stale_count
+        self.rerender_button.setText(f"Re-render {count} card{'s' if count != 1 else ''}")
+        self.rerender_button.setVisible(count > 0)

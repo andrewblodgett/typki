@@ -2,7 +2,7 @@ import json
 
 from PySide6.QtCore import QUrl
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QVBoxLayout, QWidget
 
 from typki.anki.note_type import CARD_CSS
 
@@ -46,7 +46,6 @@ class CardPreview(QWidget):
         self.view = QWebEngineView(self)
         self.dark_toggle = QCheckBox("Dark")
         self.phone_toggle = QCheckBox("Phone width")
-        self.size_label = QLabel()
         self.loaded = False
         self.pending_scripts: list[str] = []
 
@@ -54,7 +53,6 @@ class CardPreview(QWidget):
         controls.addWidget(self.dark_toggle)
         controls.addWidget(self.phone_toggle)
         controls.addStretch(1)
-        controls.addWidget(self.size_label)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(controls)
@@ -85,10 +83,6 @@ class CardPreview(QWidget):
     def clear(self) -> None:
         self.set_side("front", "", False)
         self.set_side("back", "", False)
-        self.size_label.clear()
-
-    def show_sizes(self, front_bytes: int, back_bytes: int) -> None:
-        self.size_label.setText(f"Front {front_bytes / 1024:.0f} KB · Back {back_bytes / 1024:.0f} KB")
 
     def apply_mode(self) -> None:
         dark = json.dumps(self.dark_toggle.isChecked())

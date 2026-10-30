@@ -42,7 +42,7 @@ def group_text(group: FailureGroup) -> str:
         return failure_text(group.failures[0])
     count = len(group.failures)
     affected = f"{count} card{'s' if count != 1 else ''}"
-    return f"{group.diagnostic.describe()}\nAffects {affected}. Double-click to open the file at this line."
+    return f"{group.diagnostic.describe()}\n{affected}"
 
 
 class RerenderDialog(QDialog):
@@ -66,13 +66,12 @@ class RerenderDialog(QDialog):
         self.setWindowTitle("Re-render cards")
         self.resize(640, 420)
 
-        self.message = QLabel("Checking which cards need re-rendering…")
+        self.message = QLabel("Checking…")
         self.message.setWordWrap(True)
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)
         self.failures = QListWidget()
         self.failures.setVisible(False)
-        self.failures.setToolTip("Double-click to open the card or file and fix it.")
         self.buttons = QDialogButtonBox()
         self.apply_button = QPushButton("Update cards")
         self.apply_button.setDefault(True)
@@ -100,9 +99,9 @@ class RerenderDialog(QDialog):
         self.stale_note_ids = report.stale_note_ids
         if not self.stale_note_ids:
             self.progress_bar.setVisible(False)
-            self.message.setText(f"All {report.total} cards are up to date. Nothing to do.")
+            self.message.setText("Nothing to re-render.")
             return
-        self.message.setText(f"Checking that {len(self.stale_note_ids)} stale cards compile…")
+        self.message.setText(f"Compiling {len(self.stale_note_ids)} cards…")
         self.progress_bar.setRange(0, len(self.stale_note_ids))
         self.progress_bar.setValue(0)
         note_ids = self.stale_note_ids
@@ -121,8 +120,6 @@ class RerenderDialog(QDialog):
         for group in group_failures(failures):
             item = QListWidgetItem(group_text(group))
             item.setData(GROUP_ROLE, group)
-            if group.shared:
-                item.setToolTip("\n".join(failure.title for failure in group.failures[:30]))
             self.failures.addItem(item)
         self.failures.setVisible(bool(failures))
 
@@ -131,16 +128,11 @@ class RerenderDialog(QDialog):
         compiled = len(report.compiled)
         self.show_failures(report.failures)
         if not report.failures:
-            self.message.setText(f"All {compiled} stale cards compile. Update them in Anki?")
+            self.message.setText(f"{compiled} cards ready.")
         elif compiled:
-            self.message.setText(
-                f"{compiled} cards compile and can be updated. {len(report.failures)} have errors and will "
-                "be left exactly as they are:"
-            )
+            self.message.setText(f"{compiled} cards ready, {len(report.failures)} with errors:")
         else:
-            self.message.setText(
-                f"None of the {len(report.failures)} stale cards compile, so nothing can be updated:"
-            )
+            self.message.setText(f"{len(report.failures)} cards with errors:")
         if compiled:
             self.apply_button.setText(f"Update {compiled} cards")
             self.apply_button.setVisible(True)
@@ -152,7 +144,7 @@ class RerenderDialog(QDialog):
         self.close_button.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-        self.message.setText("Updating cards in Anki…")
+        self.message.setText("Updating…")
         note_ids = self.stale_note_ids
         self.runner.run(
             lambda: self.rerenderer.run(
@@ -168,10 +160,8 @@ class RerenderDialog(QDialog):
         self.progress_bar.setVisible(False)
         self.show_failures(report.failures)
         summary = f"Updated {len(report.updated)} cards."
-        if report.cancelled:
-            summary += " Stopped early; re-render again to finish the rest."
         if report.failures:
-            summary += f" {len(report.failures)} were left unchanged:"
+            summary += f" {len(report.failures)} with errors:"
         self.message.setText(summary)
         self.close_button.setFocus()
         self.finished_updating.emit()
@@ -180,7 +170,7 @@ class RerenderDialog(QDialog):
         self.cancel_button.setVisible(False)
         self.close_button.setEnabled(True)
         self.progress_bar.setVisible(False)
-        self.message.setText(f"Something went wrong: {error}. No further cards were changed.")
+        self.message.setText(str(error))
         self.finished_updating.emit()
 
     def on_failure_activated(self, item: QListWidgetItem) -> None:

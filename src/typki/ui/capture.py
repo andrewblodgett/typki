@@ -1,5 +1,4 @@
 from collections.abc import Callable, Sequence
-from dataclasses import replace
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -20,7 +19,7 @@ from PySide6.QtWidgets import (
 from typki.anki.gateway import AnkiUnavailableError, DuplicateNoteError
 from typki.card_service import CardRender, CardService, OpenedCard, RenderFailedError, SaveResult
 from typki.domain.card import CardDraft, new_source_id, parse_tags
-from typki.domain.template import BUILT_IN_TEMPLATES, Template, find_template
+from typki.domain.template import BLANK, Template, find_template, templates_from_header
 from typki.library.drafts import DraftStore
 from typki.render.compiler import SideRender
 from typki.render.diagnostics import Diagnostic
@@ -54,7 +53,9 @@ class CapturePage(QWidget):
         self.draft_store = draft_store
         self.source_id = new_source_id()
         self.note_id: int | None = None
-        self.applied_template: Template = find_template("blank")
+        self.templates: tuple[Template, ...] = templates_from_header(service.library.read_header())
+        self.baseline = ("", "")
+        self.applied_template_name = BLANK.name
         self.render_in_flight = False
         self.render_pending = False
         self.save_in_flight = False
@@ -65,17 +66,12 @@ class CapturePage(QWidget):
         self.deck_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.deck_combo.setMinimumWidth(220)
         self.template_combo = QComboBox()
-        for template in BUILT_IN_TEMPLATES:
-            self.template_combo.addItem(template.title, template.key)
+        self.fill_template_combo()
         self.tags_edit = QLineEdit()
-        self.tags_edit.setPlaceholderText("space-separated tags")
         self.mode_label = QLabel()
-        self.mode_label.setTextFormat(Qt.TextFormat.PlainText)
 
         self.front_editor = TypstEditor()
         self.back_editor = TypstEditor()
-        self.front_editor.setPlaceholderText("Front (Typst)")
-        self.back_editor.setPlaceholderText("Back (Typst)")
         self.diagnostics_list = QListWidget()
         self.diagnostics_list.setMaximumHeight(110)
         self.preview = CardPreview()
@@ -140,16 +136,24 @@ class CapturePage(QWidget):
         layout.addWidget(splitter, 1)
         layout.addLayout(buttons)
 
-    def set_shortcut_hints(self, shortcuts: dict[str, str]) -> None:
-        self.save_next_button.setText(f"Save and next ({shortcuts['save_and_next']})")
-        self.save_stay_button.setText(f"Save and stay ({shortcuts['save_and_stay']})")
-        self.new_card_button.setText(f"New card ({shortcuts['new_card']})")
+    def fill_template_combo(self) -> None:
+        current = self.template_combo.currentData()
+        self.template_combo.blockSignals(True)
+        self.template_combo.clear()
+        for template in self.templates:
+            self.template_combo.addItem(template.title, template.name)
+        self.template_combo.setCurrentIndex(max(self.template_combo.findData(current), 0))
+        self.template_combo.blockSignals(False)
+
+    def refresh_templates(self) -> None:
+        self.templates = templates_from_header(self.service.library.read_header())
+        self.fill_template_combo()
 
     def deck_name(self) -> str:
         return self.deck_combo.currentText().strip() or DEFAULT_DECK
 
     def template_key(self) -> str:
-        return str(self.template_combo.currentData())
+        return str(self.template_combo.currentData() or "")
 
     def current_draft(self) -> CardDraft:
         return CardDraft(
@@ -163,10 +167,7 @@ class CapturePage(QWidget):
         )
 
     def is_pristine(self) -> bool:
-        return (
-            self.front_editor.toPlainText() == self.applied_template.front
-            and self.back_editor.toPlainText() == self.applied_template.back
-        )
+        return (self.front_editor.toPlainText(), self.back_editor.toPlainText()) == self.baseline
 
     def has_unsaved_new_card(self) -> bool:
         return self.note_id is None and not self.is_pristine()
@@ -187,7 +188,8 @@ class CapturePage(QWidget):
         else:
             self.deck_combo.setCurrentText(draft.deck_name)
             self.select_template_key(draft.template_name)
-            self.applied_template = find_template(draft.template_name)
+            self.baseline = (find_template(draft.template_name, self.templates).front, "")
+            self.applied_template_name = draft.template_name
             self.tags_edit.setText(" ".join(draft.tags))
             self.front_editor.setPlainText(draft.front)
             self.back_editor.setPlainText(draft.back)
@@ -197,15 +199,16 @@ class CapturePage(QWidget):
         self.update_mode_label()
         self.request_render()
 
-    def select_template_key(self, key: str) -> None:
-        index = self.template_combo.findData(find_template(key).key)
+    def select_template_key(self, name: str) -> None:
+        index = self.template_combo.findData(find_template(name, self.templates).name)
         self.template_combo.setCurrentIndex(max(index, 0))
 
-    def apply_template(self, key: str) -> None:
-        template = find_template(key)
-        self.select_template_key(template.key)
-        self.applied_template = template
-        self.back_editor.setPlainText(template.back)
+    def apply_template(self, name: str) -> None:
+        template = find_template(name, self.templates)
+        self.select_template_key(template.name)
+        self.baseline = (template.front, "")
+        self.applied_template_name = template.name
+        self.back_editor.setPlainText("")
         self.front_editor.set_source(template.front)
         self.front_editor.setFocus()
 
@@ -213,12 +216,12 @@ class CapturePage(QWidget):
         if not self.is_pristine():
             answer = QMessageBox.question(
                 self,
-                "Replace card text?",
-                "Switching templates replaces the front and back you have typed.",
+                "Typki",
+                "Replace the current card?",
                 QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
             )
             if answer != QMessageBox.StandardButton.Ok:
-                self.select_template_key(self.applied_template.key)
+                self.select_template_key(self.applied_template_name)
                 return
         self.apply_template(self.template_key())
 
@@ -268,7 +271,6 @@ class CapturePage(QWidget):
     def show_render(self, card_render: CardRender) -> None:
         self.show_side(FRONT, card_render.front, self.front_editor)
         self.show_side(BACK, card_render.back, self.back_editor)
-        self.preview.show_sizes(card_render.front.byte_size, card_render.back.byte_size)
         lines = [(FRONT, d) for d in card_render.front.diagnostics]
         lines += [(BACK, d) for d in card_render.back.diagnostics]
         self.show_diagnostic_lines(lines)
@@ -309,7 +311,6 @@ class CapturePage(QWidget):
             return
         draft = self.current_draft()
         if not draft.front.strip():
-            self.status_message.emit("The front is empty, so there is nothing to save.")
             self.front_editor.setFocus()
             return
         self.set_saving(True)
@@ -321,8 +322,7 @@ class CapturePage(QWidget):
 
     def on_saved(self, result: SaveResult, draft: CardDraft, then: Callable[[SaveResult], None]) -> None:
         self.set_saving(False)
-        verb = "Added" if result.created else "Updated"
-        self.status_message.emit(f"{verb} note {result.note_id} in {draft.deck_name}.")
+        self.status_message.emit("Saved")
         then(result)
         self.save_draft()
 
@@ -337,13 +337,13 @@ class CapturePage(QWidget):
         self.set_saving(False)
         if isinstance(error, RenderFailedError):
             self.show_render(error.card_render)
-            self.status_message.emit("Not saved: the card has compile errors.")
+            self.status_message.emit("Not saved: compile error")
         elif isinstance(error, DuplicateNoteError):
-            self.status_message.emit("Not saved: a Typki card with the same front already exists.")
+            self.status_message.emit("Not saved: duplicate front")
         elif isinstance(error, AnkiUnavailableError):
-            self.status_message.emit("Not saved: Anki is not reachable. The card stays in the form.")
+            self.status_message.emit("Not saved: Anki not reachable")
         else:
-            QMessageBox.warning(self, "Save failed", str(error))
+            QMessageBox.warning(self, "Typki", str(error))
 
     def set_saving(self, saving: bool) -> None:
         self.save_in_flight = saving
@@ -356,8 +356,8 @@ class CapturePage(QWidget):
         if self.has_unsaved_new_card():
             answer = QMessageBox.question(
                 self,
-                "Discard card?",
-                "The current card has not been saved. Discard it?",
+                "Typki",
+                "Discard the unsaved card?",
                 QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
             )
             if answer != QMessageBox.StandardButton.Discard:
@@ -379,24 +379,19 @@ class CapturePage(QWidget):
         self.source_id = card.source_id or new_source_id()
         self.deck_combo.setCurrentText(card.deck_name)
         self.tags_edit.setText(" ".join(card.tags))
-        self.applied_template = replace(
-            find_template("blank"), front=card.front_source, back=card.back_source
-        )
-        self.select_template_key("blank")
+        self.baseline = (card.front_source, card.back_source)
+        self.applied_template_name = BLANK.name
+        self.select_template_key(BLANK.name)
         self.front_editor.setPlainText(card.front_source)
         self.back_editor.setPlainText(card.back_source)
         self.restoring = False
-        self.update_mode_label(stale=opened.stale)
+        self.update_mode_label()
         self.save_draft()
         self.request_render()
         self.front_editor.setFocus()
 
-    def update_mode_label(self, stale: bool = False) -> None:
-        if self.note_id is None:
-            self.mode_label.setText("New card")
-            return
-        suffix = " · stale, saving re-renders it" if stale else ""
-        self.mode_label.setText(f"Editing note {self.note_id}{suffix}")
+    def update_mode_label(self) -> None:
+        self.mode_label.setText("" if self.note_id is None else "Editing")
 
     def focus_front(self) -> None:
         self.front_editor.setFocus()

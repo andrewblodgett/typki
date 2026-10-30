@@ -122,7 +122,7 @@ class Rerenderer:
                 report.compiled.append(card.note_id)
                 draft = CardDraft(
                     deck_name=card.deck_name,
-                    template_name="blank",
+                    template_name="",
                     tags=card.tags,
                     front=card.front_source,
                     back=card.back_source,

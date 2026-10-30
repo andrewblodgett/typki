@@ -10,7 +10,7 @@ from typki.domain.staleness import is_stale
 from typki.library.store import Library
 from typki.render.compiler import Renderer, SideRender
 
-DEFAULT_SEARCH_LIMIT = 100
+DEFAULT_SEARCH_LIMIT = 40
 UPDATE_NOT_APPLIED_MESSAGE = (
     "Anki did not apply the update. If this note is open in Anki's Browse window "
     "or editor, close it there and save again."
@@ -225,9 +225,9 @@ class CardService:
         drifted = fresh.ok and (fresh.front.svg != card.front_svg or fresh.back.svg != card.back_svg)
         return OpenedCard(card=card, stale=False, drifted=drifted)
 
-    def search(self, query: str, limit: int = DEFAULT_SEARCH_LIMIT) -> SearchResult:
+    def search(self, query: str, offset: int = 0, limit: int = DEFAULT_SEARCH_LIMIT) -> SearchResult:
         note_ids = sorted(self.gateway.find_notes(f"{note_type_query()} {query}".strip()), reverse=True)
-        records = self.gateway.notes_info(note_ids[:limit])
+        records = self.gateway.notes_info(note_ids[offset : offset + limit])
         preamble = self.library.preamble()
         summaries = tuple(
             CardSummary(card=card, stale=self.is_stale(card, preamble))

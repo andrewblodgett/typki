@@ -1,7 +1,7 @@
 from typki.domain.card import parse_tags
-from typki.domain.preamble import build_preamble
+from typki.domain.preamble import DEFAULT_HEADER, build_preamble
 from typki.domain.staleness import is_stale
-from typki.domain.template import BUILT_IN_TEMPLATES, find_template, placeholder_spans
+from typki.domain.template import BLANK, find_template, placeholder_spans, templates_from_header
 
 
 def test_preamble_header_ends_with_newline_and_counts_lines() -> None:
@@ -24,12 +24,31 @@ def test_staleness() -> None:
     assert is_stale("h", "v", "h", "v2")
 
 
-def test_templates_and_placeholders() -> None:
-    assert find_template("definition").title == "Definition"
-    assert find_template("missing").key == "blank"
-    assert len({template.key for template in BUILT_IN_TEMPLATES}) == len(BUILT_IN_TEMPLATES)
-    text = find_template("definition").back
-    assert [text[start:end] for start, end in placeholder_spans(text)] == ["«term»", "«definition»"]
+def test_templates_come_from_header_functions() -> None:
+    header = """#set text(size: 12pt)
+#let RR = $bb(R)$
+#let theorem(name, statement) = [*Theorem* (#name). #statement]
+#let lemma(body, numbered: true) = [*Lemma.* #body]
+#let qed() = [∎]
+  #let indented(x) = x
+#let theorem(other) = [duplicate]
+"""
+    templates = templates_from_header(header)
+    assert [template.title for template in templates] == ["Blank", "theorem", "lemma", "qed"]
+    assert find_template("theorem", templates).front == "#theorem[«name»][«statement»]"
+    assert find_template("lemma", templates).front == "#lemma[«body»]"
+    assert find_template("qed", templates).front == "#qed()"
+    assert find_template("missing", templates) is BLANK
+
+
+def test_default_header_ships_definition_and_theorem() -> None:
+    names = [template.name for template in templates_from_header(DEFAULT_HEADER)]
+    assert names == ["", "definition", "theorem"]
+
+
+def test_placeholder_spans() -> None:
+    text = "#definition[«term»][«body»]"
+    assert [text[start:end] for start, end in placeholder_spans(text)] == ["«term»", "«body»"]
 
 
 def test_parse_tags_deduplicates_and_keeps_order() -> None:

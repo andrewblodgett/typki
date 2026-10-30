@@ -2,46 +2,49 @@ import re
 from dataclasses import dataclass
 
 PLACEHOLDER_PATTERN = re.compile(r"«[^«»\n]*»")
+FUNCTION_DEFINITION = re.compile(r"^#let\s+([A-Za-z_][\w-]*)\(([^()]*)\)\s*=", re.M)
+BLANK_TITLE = "Blank"
 
 
 @dataclass(frozen=True)
 class Template:
-    key: str
-    title: str
+    name: str
     front: str
-    back: str
+
+    @property
+    def title(self) -> str:
+        return self.name or BLANK_TITLE
 
 
-BUILT_IN_TEMPLATES: tuple[Template, ...] = (
-    Template("definition", "Definition", "*Define* «term».", "«term» is «definition»."),
-    Template("theorem", "Theorem", "State *«theorem name»*.", "*Theorem.* «statement»"),
-    Template(
-        "name-the-theorem",
-        "Name the theorem",
-        "Which theorem says: «statement»",
-        "*«theorem name»*",
-    ),
-    Template(
-        "hypotheses",
-        "Hypotheses",
-        "What are the hypotheses of *«theorem name»*?",
-        "+ «hypothesis»\n+ «hypothesis»",
-    ),
-    Template("proof-idea", "Proof idea", "Proof idea of *«theorem name»*?", "«key idea»"),
-    Template(
-        "example",
-        "Example or counterexample",
-        "Give an example of «object» that is «property» but not «property».",
-        "«example»",
-    ),
-    Template("formula", "Formula", "«quantity» $=$ ?", "$ «formula» $"),
-    Template("blank", "Blank", "", ""),
-)
+BLANK = Template(name="", front="")
 
 
-def find_template(key: str, templates: tuple[Template, ...] = BUILT_IN_TEMPLATES) -> Template:
-    by_key = {template.key: template for template in templates}
-    return by_key.get(key) or by_key.get("blank") or templates[0]
+def positional_parameters(parameter_list: str) -> list[str]:
+    parameters = [parameter.strip() for parameter in parameter_list.split(",")]
+    return [
+        parameter
+        for parameter in parameters
+        if parameter and ":" not in parameter and not parameter.startswith("..")
+    ]
+
+
+def template_call(name: str, parameter_list: str) -> str:
+    parameters = positional_parameters(parameter_list)
+    if not parameters:
+        return f"#{name}()"
+    return f"#{name}" + "".join(f"[«{parameter}»]" for parameter in parameters)
+
+
+def templates_from_header(header: str) -> tuple[Template, ...]:
+    templates: dict[str, Template] = {}
+    for match in FUNCTION_DEFINITION.finditer(header):
+        name = match.group(1)
+        templates.setdefault(name, Template(name=name, front=template_call(name, match.group(2))))
+    return (BLANK, *templates.values())
+
+
+def find_template(name: str, templates: tuple[Template, ...]) -> Template:
+    return next((template for template in templates if template.name == name), BLANK)
 
 
 def placeholder_spans(text: str) -> list[tuple[int, int]]:

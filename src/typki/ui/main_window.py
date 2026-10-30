@@ -80,21 +80,17 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
-        self.connection_label = QLabel("Connecting to Anki…")
+        self.connection_label = QLabel()
         self.statusBar().addPermanentWidget(self.connection_label)
-        self.statusBar().addPermanentWidget(QLabel(str(service.library.root)))
 
         self.reconnect_timer = QTimer(self, singleShot=True, interval=RECONNECT_INTERVAL_MS)
         self.reconnect_timer.timeout.connect(self.connect_to_anki)
 
         self.watcher = LibraryWatcher(service.library, self)
         self.watcher.changed.connect(self.on_library_changed)
-        global_page.status_message.connect(self.show_status)
         global_page.rerender_requested.connect(self.open_rerender)
         capture.status_message.connect(self.show_status)
-        browser.status_message.connect(self.show_status)
         browser.open_requested.connect(self.open_note)
-        capture.set_shortcut_hints(shortcuts)
         self.install_actions(shortcuts)
 
         if startup_problems:
@@ -144,6 +140,8 @@ class MainWindow(QMainWindow):
         card_menu.addAction(quit_action)
 
     def on_tab_changed(self, index: int) -> None:
+        if index == BROWSE_TAB:
+            self.browser.refresh()
         if index == GLOBAL_TAB:
             self.global_page.set_sample(
                 self.capture.front_editor.toPlainText(), self.capture.back_editor.toPlainText()
@@ -151,6 +149,7 @@ class MainWindow(QMainWindow):
             self.global_page.refresh_staleness()
 
     def on_library_changed(self) -> None:
+        self.capture.refresh_templates()
         self.capture.request_render()
         self.global_page.on_library_changed()
 
@@ -205,19 +204,17 @@ class MainWindow(QMainWindow):
 
     def on_anki_ready(self, state: AnkiStartupState) -> None:
         self.anki_connected = True
-        self.connection_label.setText(f"Anki connected (AnkiConnect v{state.version})")
+        self.connection_label.clear()
         self.capture.set_deck_names(state.deck_names)
         if self.tabs.currentIndex() == GLOBAL_TAB:
             self.global_page.refresh_staleness()
-        if state.created_note_type:
-            self.show_status("Created the 'Typki Card' note type in Anki.")
         if not state.health.healthy:
             self.offer_note_type_repair(state.health)
 
     def on_anki_unavailable(self, error: Exception) -> None:
         self.anki_connected = False
         if isinstance(error, AnkiUnavailableError):
-            self.connection_label.setText("Anki not reachable, retrying…")
+            self.connection_label.setText("Anki not reachable")
         else:
             self.connection_label.setText(f"Anki error: {error}")
         self.reconnect_timer.start()
@@ -225,40 +222,38 @@ class MainWindow(QMainWindow):
     def offer_note_type_repair(self, health: NoteTypeHealth) -> None:
         answer = QMessageBox.question(
             self,
-            "Repair note type?",
+            "Typki",
             health.describe() + "\n\nRepair it now? Existing notes and review history are kept.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if answer == QMessageBox.StandardButton.Yes:
             self.anki_runner.run(
                 lambda: self.service.repair_note_type(health),
-                lambda _result: self.show_status("Repaired the 'Typki Card' note type."),
+                lambda _result: None,
                 self.on_repair_failed,
             )
 
     def on_repair_failed(self, error: Exception) -> None:
-        QMessageBox.warning(self, "Repair failed", str(error))
+        QMessageBox.warning(self, "Typki", str(error))
 
     def open_note(self, note_id: int) -> None:
         if self.capture.has_unsaved_new_card():
             answer = QMessageBox.question(
                 self,
-                "Discard card?",
-                "The card in the capture form has not been saved. Discard it and open this note?",
+                "Typki",
+                "Discard the unsaved card?",
                 QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
             )
             if answer != QMessageBox.StandardButton.Discard:
                 return
-        self.show_status(f"Opening note {note_id}…")
         self.anki_runner.run(lambda: self.service.open(note_id), self.on_note_opened, self.on_open_failed)
 
     def on_note_opened(self, opened: OpenedCard) -> None:
         if opened.drifted:
             answer = QMessageBox.warning(
                 self,
-                "Card changed outside Typki",
-                "The rendered fields stored in Anki differ from a fresh render of this card's source, "
-                "probably because it was edited in Anki. Saving will replace them with Typki's render.",
+                "Typki",
+                "This card was changed outside Typki. Saving will overwrite those changes.",
                 QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel,
             )
             if answer != QMessageBox.StandardButton.Open:
@@ -268,9 +263,9 @@ class MainWindow(QMainWindow):
 
     def on_open_failed(self, error: Exception) -> None:
         if isinstance(error, NotTypkiNoteError):
-            QMessageBox.information(self, "Read-only note", str(error))
+            QMessageBox.information(self, "Typki", str(error))
         else:
-            QMessageBox.warning(self, "Could not open note", str(error))
+            QMessageBox.warning(self, "Typki", str(error))
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.capture.save_draft()
