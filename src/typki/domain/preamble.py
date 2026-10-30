@@ -7,6 +7,11 @@ HEADER_FILENAME = "header.typ"
 DEFAULT_HEADER = """#set page(width: auto, height: auto, margin: 6pt, fill: none)
 #set text(font: "New Computer Modern", size: 16pt)
 
+#show math.equation.where(block: true): equation => layout(region => {
+  let width = measure(equation).width
+  if width > region.width { scale(region.width / width * 100%, reflow: true, equation) } else { equation }
+})
+
 #show: body => context {
   let max-width = 120mm
   block(width: calc.min(measure(body).width, max-width), body)

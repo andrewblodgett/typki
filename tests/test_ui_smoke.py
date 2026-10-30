@@ -9,7 +9,7 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
 
 from conftest import replace_defn
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
 from typki.anki import note_type
@@ -18,19 +18,41 @@ from typki.anki.fake_anki import FakeAnki
 from typki.card_service import CardService
 from typki.domain.card import CardDraft
 from typki.library.drafts import DraftStore
+from typki.library.outbox import Outbox
 from typki.ui.background import TaskRunner
 from typki.ui.browser import BrowserPage
 from typki.ui.capture import CapturePage
 from typki.ui.global_page import GlobalPage
 from typki.ui.main_window import MainWindow
-from typki.ui.rerender_dialog import RerenderDialog
+from typki.ui.save_queue import SaveQueue
 from typki.ui.shortcuts import SHORTCUT_ACTIONS
 
 WAIT_MS = 10000
+DEAD_URL = "http://127.0.0.1:9"
 
 
 def raise_error(error: Exception) -> None:
     raise error
+
+
+def build_window(service: CardService, gateway: AnkiConnectGateway, state_dir: Path) -> MainWindow:
+    render_runner = TaskRunner(1, raise_error)
+    anki_runner = TaskRunner(2, raise_error)
+    save_queue = SaveQueue(service, anki_runner, Outbox(state_dir / "outbox"))
+    capture = CapturePage(service, render_runner, save_queue, DraftStore(state_dir / "draft.json"))
+    browser = BrowserPage(service, anki_runner)
+    global_page = GlobalPage(service, render_runner)
+    shortcuts = {action.key: action.default for action in SHORTCUT_ACTIONS}
+    return MainWindow(
+        gateway, service, capture, browser, global_page, save_queue, anki_runner, render_runner, shortcuts, []
+    )
+
+
+def settle(window: MainWindow) -> None:
+    for _ in range(3):
+        window.anki_runner.wait()
+        window.render_runner.wait()
+        QApplication.processEvents()
 
 
 @pytest.fixture
@@ -41,166 +63,270 @@ def window(
     tmp_path: Path,
 ) -> Iterator[MainWindow]:
     gateway, _ = fake_ankiconnect
-    render_runner = TaskRunner(1, raise_error)
-    anki_runner = TaskRunner(2, raise_error)
-    draft_store = DraftStore(tmp_path / "state" / "draft.json")
-    capture = CapturePage(service, render_runner, anki_runner, draft_store)
-    browser = BrowserPage(service, anki_runner)
-    global_page = GlobalPage(service, render_runner, anki_runner)
-    shortcuts = {action.key: action.default for action in SHORTCUT_ACTIONS}
-    main_window = MainWindow(
-        gateway, service, capture, browser, global_page, anki_runner, render_runner, shortcuts, []
-    )
+    main_window = build_window(service, gateway, tmp_path / "state")
     qtbot.addWidget(main_window)
-    capture.restore(None)
+    main_window.capture.restore(None)
     main_window.show()
     qtbot.waitUntil(lambda: main_window.anki_connected, timeout=WAIT_MS)
     yield main_window
-    for _ in range(3):
-        anki_runner.wait()
-        render_runner.wait()
-        QApplication.processEvents()
+    settle(main_window)
 
 
-def type_card(window: MainWindow, deck: str, front: str, back: str) -> None:
+def type_card(window: MainWindow, deck: str, front: str, back: str = "") -> None:
     capture = window.capture
     capture.deck_combo.setCurrentText(deck)
     capture.front_editor.setPlainText(front)
     capture.back_editor.setPlainText(back)
 
 
-def test_save_and_next_adds_note_and_resets_form(
+def note_with_front(fake: FakeAnki, front: str) -> list[int]:
+    return [note_id for note_id, note in fake.notes.items() if note.fields[note_type.FRONT_SOURCE] == front]
+
+
+def test_typing_autosaves_and_shows_saved(
     qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
 ) -> None:
     _, fake = fake_ankiconnect
-    capture = window.capture
     type_card(window, "Real Analysis", "*Define* a Cauchy sequence.", "$ forall epsilon > 0 $")
-    first_source_id = capture.source_id
-    qtbot.keyClick(capture.front_editor, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
     qtbot.waitUntil(lambda: len(fake.notes) == 1, timeout=WAIT_MS)
-    qtbot.waitUntil(lambda: not capture.save_in_flight, timeout=WAIT_MS)
+    qtbot.waitUntil(lambda: window.indicator.text() == "Saved", timeout=WAIT_MS)
     stored = next(iter(fake.notes.values()))
-    assert stored.fields[note_type.FRONT_SOURCE] == "*Define* a Cauchy sequence."
     assert stored.deck_name == "Real Analysis"
-    assert capture.note_id is None
-    assert capture.source_id != first_source_id
-    assert capture.deck_name() == "Real Analysis"
-    assert (capture.front_editor.toPlainText(), capture.back_editor.toPlainText()) == capture.baseline
+    assert stored.fields[note_type.BACK_SOURCE] == "$ forall epsilon > 0 $"
 
 
-def test_compile_error_is_listed_and_blocks_save(
+def test_further_edits_update_the_same_note(
     qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
 ) -> None:
     _, fake = fake_ankiconnect
-    capture = window.capture
-    type_card(window, "Real Analysis", "fine\n$ nosuchthing(x) $", "back")
-    qtbot.waitUntil(lambda: capture.diagnostics_list.count() > 0, timeout=WAIT_MS)
-    assert "Front card:2:" in capture.diagnostics_list.item(0).text()
-    capture.save_and_next()
-    qtbot.waitUntil(lambda: not capture.save_in_flight, timeout=WAIT_MS)
-    assert not fake.notes
-    assert capture.front_editor.toPlainText().startswith("fine")
-
-
-def test_save_and_stay_then_edit_updates_same_note(
-    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
-) -> None:
-    _, fake = fake_ankiconnect
-    capture = window.capture
     type_card(window, "Real Analysis", "Heine Borel", "closed and bounded")
-    capture.save_and_stay()
-    qtbot.waitUntil(lambda: capture.note_id is not None, timeout=WAIT_MS)
-    capture.back_editor.setPlainText("closed and bounded iff compact")
-    capture.save_and_stay()
-    qtbot.waitUntil(lambda: not capture.save_in_flight, timeout=WAIT_MS)
+    qtbot.waitUntil(lambda: len(fake.notes) == 1, timeout=WAIT_MS)
+    window.capture.back_editor.setPlainText("closed and bounded iff compact")
+    window.capture.tags_edit.setText("topology")
     qtbot.waitUntil(
         lambda: (
             next(iter(fake.notes.values())).fields[note_type.BACK_SOURCE] == "closed and bounded iff compact"
         ),
         timeout=WAIT_MS,
     )
+    qtbot.waitUntil(lambda: next(iter(fake.notes.values())).tags == ["topology"], timeout=WAIT_MS)
     assert len(fake.notes) == 1
 
 
-def test_browse_search_and_open_for_editing(
+def test_compile_error_is_not_saved(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    _, fake = fake_ankiconnect
+    type_card(window, "Real Analysis", "fine\n$ nosuchthing(x) $", "back")
+    qtbot.waitUntil(lambda: window.capture.diagnostics_list.count() > 0, timeout=WAIT_MS)
+    assert "Front card:2:" in window.capture.diagnostics_list.item(0).text()
+    qtbot.wait(800)
+    assert not fake.notes
+
+
+def test_template_starts_new_card_and_placeholders_block_saving(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    _, fake = fake_ankiconnect
+    capture = window.capture
+    type_card(window, "Real Analysis", "first card")
+    capture.template_combo.setCurrentIndex(capture.template_combo.findData("theorem"))
+    capture.template_combo.activated.emit(capture.template_combo.currentIndex())
+    qtbot.waitUntil(lambda: len(note_with_front(fake, "first card")) == 1, timeout=WAIT_MS)
+    assert capture.front_editor.toPlainText() == "#theorem[«name»][«statement»]"
+    assert capture.front_editor.textCursor().selectedText() == "«name»"
+    assert capture.back_editor.toPlainText() == ""
+    qtbot.wait(800)
+    assert len(fake.notes) == 1
+    capture.front_editor.setPlainText("#theorem[Rolle][$f(a) = f(b) ==> exists c : f'(c) = 0$]")
+    qtbot.waitUntil(lambda: len(fake.notes) == 2, timeout=WAIT_MS)
+
+
+def test_new_card_shortcut_saves_immediately_and_resets(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    _, fake = fake_ankiconnect
+    capture = window.capture
+    type_card(window, "Real Analysis", "quick card", "answer")
+    qtbot.waitUntil(lambda: capture.last_render_ok, timeout=WAIT_MS)
+    first_source = capture.source_id
+    qtbot.keyClick(capture.front_editor, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+    assert capture.source_id != first_source
+    assert capture.front_editor.toPlainText() == ""
+    assert capture.deck_name() == "Real Analysis"
+    qtbot.waitUntil(lambda: len(note_with_front(fake, "quick card")) == 1, timeout=WAIT_MS)
+
+
+def test_open_from_browse_and_edit_in_place(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    _, fake = fake_ankiconnect
+    type_card(window, "Real Analysis", "Bolzano Weierstrass", "bounded sequences converge on a subsequence")
+    qtbot.waitUntil(lambda: len(fake.notes) == 1, timeout=WAIT_MS)
+    window.capture.new_card()
+    window.focus_search()
+    browser = window.browser
+    qtbot.keyClicks(browser.search_edit, "Bolzano")
+    qtbot.waitUntil(lambda: browser.results.count() == 1, timeout=WAIT_MS)
+    assert not browser.results.item(0).icon().isNull()
+    browser.results.itemActivated.emit(browser.results.item(0))
+    qtbot.waitUntil(
+        lambda: window.capture.front_editor.toPlainText() == "Bolzano Weierstrass", timeout=WAIT_MS
+    )
+    assert window.tabs.currentIndex() == 0
+    window.capture.back_editor.setPlainText("every bounded sequence has a convergent subsequence")
+    qtbot.waitUntil(
+        lambda: next(iter(fake.notes.values())).fields[note_type.BACK_SOURCE].startswith("every bounded"),
+        timeout=WAIT_MS,
+    )
+    assert len(fake.notes) == 1
+
+
+def test_browse_lists_newest_first_and_filters_as_you_type(
     qtbot: QtBot,
     window: MainWindow,
     service: CardService,
     fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
 ) -> None:
     _, fake = fake_ankiconnect
-    capture = window.capture
-    type_card(
-        window, "Real Analysis", "Bolzano Weierstrass", "bounded sequences have convergent subsequences"
-    )
-    capture.save_and_next()
-    qtbot.waitUntil(lambda: len(fake.notes) == 1, timeout=WAIT_MS)
-    qtbot.waitUntil(lambda: not capture.save_in_flight, timeout=WAIT_MS)
-
-    window.focus_search()
+    for front in ("alpha card", "beta card", "gamma card"):
+        service.save(CardDraft("Real Analysis", "", (), front, ""))
+    window.tabs.setCurrentIndex(1)
     browser = window.browser
-    qtbot.keyClicks(browser.search_edit, "Bolzano")
+    qtbot.waitUntil(lambda: browser.results.count() == 3, timeout=WAIT_MS)
+    assert browser.results.item(0).data(Qt.ItemDataRole.UserRole) == max(fake.notes)
+    qtbot.keyClicks(browser.search_edit, "beta")
     qtbot.waitUntil(lambda: browser.results.count() == 1, timeout=WAIT_MS)
-    assert not browser.results.item(0).icon().isNull()
-
-    browser.results.itemActivated.emit(browser.results.item(0))
-    qtbot.waitUntil(lambda: capture.note_id is not None, timeout=WAIT_MS)
-    assert capture.front_editor.toPlainText() == "Bolzano Weierstrass"
-    assert window.tabs.currentIndex() == 0
 
 
-def test_drift_warning_can_cancel_open(
+def test_browse_loads_more_on_scroll(qtbot: QtBot, window: MainWindow, service: CardService) -> None:
+    for index in range(95):
+        service.save(CardDraft("Real Analysis", "", (), f"card number {index}", ""))
+    window.tabs.setCurrentIndex(1)
+    browser = window.browser
+    qtbot.waitUntil(lambda: browser.results.count() >= 40, timeout=WAIT_MS)
+    browser.results.scrollToBottom()
+    qtbot.waitUntil(lambda: browser.results.count() >= 80, timeout=WAIT_MS)
+    browser.results.scrollToBottom()
+    qtbot.waitUntil(lambda: browser.results.count() == 95, timeout=WAIT_MS)
+
+
+def test_ctrl_delete_removes_card(
     qtbot: QtBot,
     window: MainWindow,
+    service: CardService,
     fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, fake = fake_ankiconnect
-    capture = window.capture
-    type_card(window, "Real Analysis", "drifting card", "back")
-    capture.save_and_next()
-    qtbot.waitUntil(lambda: len(fake.notes) == 1, timeout=WAIT_MS)
-    qtbot.waitUntil(lambda: not capture.save_in_flight, timeout=WAIT_MS)
-    note = next(iter(fake.notes.values()))
-    note.fields[note_type.BACK] = "edited in Anki"
-    warnings: list[str] = []
-
-    def cancel(*args: object) -> QMessageBox.StandardButton:
-        warnings.append(str(args[2]))
-        return QMessageBox.StandardButton.Cancel
-
-    monkeypatch.setattr(QMessageBox, "warning", cancel)
-    window.open_note(note.note_id)
-    qtbot.waitUntil(lambda: bool(warnings), timeout=WAIT_MS)
-    assert warnings == ["This card was changed outside Typki. Saving will overwrite those changes."]
-    assert capture.note_id is None
-
-
-def test_draft_restores_after_restart(
-    qtbot: QtBot, window: MainWindow, service: CardService, tmp_path: Path
-) -> None:
-    capture = window.capture
-    type_card(window, "Real Analysis", "unsaved thought", "half written")
-    capture.save_draft()
-    restored_page = CapturePage(
-        service,
-        TaskRunner(1, raise_error),
-        TaskRunner(1, raise_error),
-        DraftStore(tmp_path / "state" / "draft.json"),
+    doomed = service.save(CardDraft("Real Analysis", "", (), "delete me", "")).note_id
+    service.save(CardDraft("Real Analysis", "", (), "keep me", ""))
+    window.tabs.setCurrentIndex(1)
+    browser = window.browser
+    qtbot.waitUntil(lambda: browser.results.count() == 2, timeout=WAIT_MS)
+    browser.results.setFocus()
+    row = next(
+        index
+        for index in range(browser.results.count())
+        if browser.results.item(index).data(Qt.ItemDataRole.UserRole) == doomed
     )
-    qtbot.addWidget(restored_page)
-    restored_page.restore(restored_page.draft_store.load())
-    assert restored_page.front_editor.toPlainText() == "unsaved thought"
-    assert restored_page.source_id == capture.source_id
-    restored_page.render_runner.wait()
+    browser.results.setCurrentRow(row)
+    qtbot.keyClick(browser.results, Qt.Key.Key_Delete, Qt.KeyboardModifier.ControlModifier)
+    qtbot.waitUntil(lambda: doomed not in fake.notes, timeout=WAIT_MS)
+    qtbot.waitUntil(lambda: browser.results.count() == 1, timeout=WAIT_MS)
+    assert len(fake.notes) == 1
 
 
-def save_cards(qtbot: QtBot, window: MainWindow, deck: str, fronts: list[str]) -> None:
+def test_leaving_global_tab_rerenders_in_background(
+    qtbot: QtBot,
+    window: MainWindow,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+) -> None:
+    _, fake = fake_ankiconnect
+    for index in range(30):
+        service.save(CardDraft("Real Analysis", "", (), f"#defn[Term {index}][meaning]", ""))
+    reviewed = next(iter(fake.notes))
+    fake.notes[reviewed].review_count = 4
+    window.tabs.setCurrentIndex(2)
+    header = window.global_page.header_editor
+    header.setFocus()
+    header.setPlainText(header.toPlainText().replace("[*#term.* #body]", "[_#term:_ #body]"))
+    window.tabs.setCurrentIndex(0)
+    qtbot.waitUntil(lambda: window.rerender.rerenderer.staleness().stale_count == 0, timeout=WAIT_MS)
+    assert fake.notes[reviewed].review_count == 4
+    assert len(fake.notes) == 30
+
+
+def test_broken_header_leaves_cards_untouched(
+    qtbot: QtBot,
+    window: MainWindow,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+) -> None:
+    _, fake = fake_ankiconnect
+    for index in range(3):
+        service.save(CardDraft("Real Analysis", "", (), f"#defn[Broken {index}][x]", ""))
+    before = {note_id: dict(note.fields) for note_id, note in fake.notes.items()}
+    replace_defn(service.library, "#let defn(term, body) = [#nope]")
+    window.tabs.setCurrentIndex(2)
+    window.tabs.setCurrentIndex(0)
+    qtbot.waitUntil(lambda: window.rerender.failed == 3, timeout=WAIT_MS)
+    assert "3 cards not re-rendered" in window.indicator.text()
+    assert {note_id: note.fields for note_id, note in fake.notes.items()} == before
+
+
+def test_offline_cards_sync_when_anki_returns_without_duplicates(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    gateway, fake = fake_ankiconnect
+    live_url = gateway.url
+    gateway.url = DEAD_URL
     capture = window.capture
-    for front in fronts:
-        type_card(window, deck, front, "back")
-        capture.save_and_next()
-        qtbot.waitUntil(lambda: not capture.save_in_flight, timeout=WAIT_MS)
+    for index in range(3):
+        type_card(window, "Real Analysis", f"offline card {index}", "back")
+        qtbot.waitUntil(lambda: capture.last_render_ok, timeout=WAIT_MS)
+        capture.new_card()
+    qtbot.waitUntil(lambda: window.save_queue.outbox.count() == 3, timeout=WAIT_MS)
+    qtbot.waitUntil(lambda: window.indicator.text().startswith("Offline · 3 queued"), timeout=WAIT_MS)
+    assert not fake.notes
+    gateway.url = live_url
+    window.connect_to_anki()
+    qtbot.waitUntil(lambda: len(fake.notes) == 3, timeout=WAIT_MS)
+    qtbot.waitUntil(lambda: window.save_queue.outbox.count() == 0, timeout=WAIT_MS)
+    window.connect_to_anki()
+    settle(window)
+    assert sorted(note.fields[note_type.FRONT_SOURCE] for note in fake.notes.values()) == [
+        "offline card 0",
+        "offline card 1",
+        "offline card 2",
+    ]
+
+
+def test_outbox_survives_restart(
+    qtbot: QtBot,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+    tmp_path: Path,
+) -> None:
+    gateway, fake = fake_ankiconnect
+    Outbox(tmp_path / "restart" / "outbox").put(
+        CardDraft("Real Analysis", "", (), "queued before restart", "")
+    )
+    restarted = build_window(service, gateway, tmp_path / "restart")
+    qtbot.addWidget(restarted)
+    restarted.capture.restore(None)
+    restarted.show()
+    qtbot.waitUntil(lambda: len(fake.notes) == 1, timeout=WAIT_MS)
+    settle(restarted)
+
+
+def test_tag_completion_inserts_known_tag(qtbot: QtBot, window: MainWindow) -> None:
+    tags_edit = window.capture.tags_edit
+    tags_edit.set_known_tags(["real-analysis", "topology"])
+    tags_edit.setFocus()
+    qtbot.keyClicks(tags_edit, "algebra top")
+    tags_edit.insert_completion("topology")
+    assert tags_edit.text() == "algebra topology "
 
 
 def test_global_tab_shows_and_saves_header(qtbot: QtBot, window: MainWindow, service: CardService) -> None:
@@ -212,13 +338,13 @@ def test_global_tab_shows_and_saves_header(qtbot: QtBot, window: MainWindow, ser
     global_page.header_editor.setFocus()
     global_page.header_editor.setPlainText(global_page.header_editor.toPlainText() + "#let shiny = [new]\n")
     qtbot.waitUntil(lambda: "#let shiny" in service.library.read_header(), timeout=WAIT_MS)
+    qtbot.waitUntil(lambda: window.capture.template_combo.findData("shiny") < 0, timeout=WAIT_MS)
 
 
-def test_global_tab_uses_sample_when_capture_is_empty(window: MainWindow) -> None:
-    window.capture.front_editor.setPlainText("")
-    window.capture.back_editor.setPlainText("")
-    window.tabs.setCurrentIndex(2)
-    assert "compact" in window.global_page.sample_front
+def test_header_functions_become_templates(qtbot: QtBot, window: MainWindow, service: CardService) -> None:
+    lemma = "#let lemma(statement) = [*Lemma.* #statement]\n"
+    service.library.write_header(service.library.read_header() + lemma)
+    qtbot.waitUntil(lambda: window.capture.template_combo.findData("lemma") >= 0, timeout=WAIT_MS)
 
 
 def test_header_error_is_listed_and_jumps_to_line(qtbot: QtBot, window: MainWindow) -> None:
@@ -229,52 +355,6 @@ def test_header_error_is_listed_and_jumps_to_line(qtbot: QtBot, window: MainWind
     assert global_page.diagnostics_list.item(0).text().startswith("header.typ:2:")
     global_page.diagnostics_list.itemActivated.emit(global_page.diagnostics_list.item(0))
     assert global_page.header_editor.textCursor().blockNumber() == 1
-
-
-def test_rerender_dialog_updates_stale_cards(
-    qtbot: QtBot,
-    window: MainWindow,
-    service: CardService,
-    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
-) -> None:
-    _, fake = fake_ankiconnect
-    save_cards(qtbot, window, "Real Analysis", [f"#defn[Term {index}][meaning]" for index in range(5)])
-    qtbot.waitUntil(lambda: len(fake.notes) == 5, timeout=WAIT_MS)
-    replace_defn(service.library, "#let defn(term, body) = [_#term _ #body]")
-    window.open_rerender()
-    dialog = window.findChild(RerenderDialog)
-    assert dialog is not None
-    qtbot.waitUntil(lambda: dialog.apply_button.isVisible(), timeout=WAIT_MS)
-    assert dialog.apply_button.text() == "Update 5 cards"
-    dialog.apply_button.click()
-    qtbot.waitUntil(lambda: dialog.message.text().startswith("Updated 5 cards"), timeout=WAIT_MS)
-    assert window.rerenderer.staleness().stale_count == 0
-
-
-def test_rerender_dialog_blocks_broken_header(
-    qtbot: QtBot,
-    window: MainWindow,
-    service: CardService,
-    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
-) -> None:
-    _, fake = fake_ankiconnect
-    save_cards(qtbot, window, "Real Analysis", [f"#defn[Broken {index}][x]" for index in range(3)])
-    qtbot.waitUntil(lambda: len(fake.notes) == 3, timeout=WAIT_MS)
-    before = {note_id: dict(note.fields) for note_id, note in fake.notes.items()}
-    replace_defn(service.library, "#let defn(term, body) = [#nope]")
-    window.open_rerender()
-    dialog = window.findChild(RerenderDialog)
-    assert dialog is not None
-    qtbot.waitUntil(lambda: dialog.failures.count() == 1, timeout=WAIT_MS)
-    assert dialog.failures.item(0).text().endswith("3 cards")
-    assert not dialog.apply_button.isVisible()
-    assert {note_id: note.fields for note_id, note in fake.notes.items()} == before
-    dialog.failures.itemActivated.emit(dialog.failures.item(0))
-    assert window.tabs.currentIndex() == 2
-    defn_line = next(
-        index for index, line in enumerate(service.library.read_header().splitlines()) if "#nope" in line
-    )
-    assert window.global_page.header_editor.textCursor().blockNumber() == defn_line
 
 
 def test_external_header_edit_reloads_global_tab(
@@ -288,51 +368,16 @@ def test_external_header_edit_reloads_global_tab(
     )
 
 
-def test_browse_lists_newest_first_and_filters_as_you_type(
-    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
-) -> None:
-    _, fake = fake_ankiconnect
-    save_cards(qtbot, window, "Real Analysis", ["alpha card", "beta card", "gamma card"])
-    qtbot.waitUntil(lambda: len(fake.notes) == 3, timeout=WAIT_MS)
-    window.tabs.setCurrentIndex(1)
-    browser = window.browser
-    qtbot.waitUntil(lambda: browser.results.count() == 3, timeout=WAIT_MS)
-    newest = max(fake.notes)
-    assert browser.results.item(0).data(Qt.ItemDataRole.UserRole) == newest
-    qtbot.keyClicks(browser.search_edit, "beta")
-    qtbot.waitUntil(lambda: browser.results.count() == 1, timeout=WAIT_MS)
-
-
-def test_browse_loads_more_on_scroll(
+def test_draft_restores_after_restart(
     qtbot: QtBot,
     window: MainWindow,
     service: CardService,
     fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
 ) -> None:
-    for index in range(95):
-        service.save(CardDraft("Real Analysis", "", (), f"card number {index}", "back"))
-    window.tabs.setCurrentIndex(1)
-    browser = window.browser
-    qtbot.waitUntil(lambda: browser.results.count() >= 40, timeout=WAIT_MS)
-    browser.results.scrollToBottom()
-    qtbot.waitUntil(lambda: browser.results.count() >= 80, timeout=WAIT_MS)
-    browser.results.scrollToBottom()
-    qtbot.waitUntil(lambda: browser.results.count() == 95, timeout=WAIT_MS)
-
-
-def test_header_templates_fill_front_and_clear_back(
-    qtbot: QtBot, window: MainWindow, service: CardService
-) -> None:
-    capture = window.capture
-    assert capture.template_combo.findData("theorem") >= 0
-    capture.back_editor.setPlainText("")
-    capture.front_editor.setPlainText("")
-    capture.template_combo.setCurrentIndex(capture.template_combo.findData("theorem"))
-    capture.template_combo.activated.emit(capture.template_combo.currentIndex())
-    assert capture.front_editor.toPlainText() == "#theorem[«name»][«statement»]"
-    assert capture.front_editor.textCursor().selectedText() == "«name»"
-    assert capture.back_editor.toPlainText() == ""
-    service.library.write_header(
-        service.library.read_header() + "#let lemma(statement) = [*Lemma.* #statement]\n"
-    )
-    qtbot.waitUntil(lambda: capture.template_combo.findData("lemma") >= 0, timeout=WAIT_MS)
+    gateway, _ = fake_ankiconnect
+    type_card(window, "Real Analysis", "unsaved thought", "half written")
+    window.capture.save_draft()
+    restored = window.capture.draft_store.load()
+    assert restored is not None
+    assert restored.front == "unsaved thought"
+    assert restored.source_id == window.capture.source_id

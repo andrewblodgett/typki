@@ -1,10 +1,8 @@
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
-    QHBoxLayout,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -12,14 +10,11 @@ from PySide6.QtWidgets import (
 
 from typki.card_service import CardRender, CardService
 from typki.render.diagnostics import HEADER_FILE_LABEL, Diagnostic
-from typki.rerender.plan import StalenessReport
-from typki.rerender.runner import Rerenderer
 from typki.ui.background import TaskRunner
 from typki.ui.editor import TypstEditor
 from typki.ui.preview import CardPreview
 
 WRITE_DEBOUNCE_MS = 250
-STALENESS_DEBOUNCE_MS = 900
 DIAGNOSTIC_ROLE = Qt.ItemDataRole.UserRole
 
 SAMPLE_FRONT = "*Define* a compact set $K subset RR$."
@@ -28,20 +23,15 @@ $ K subset.eq union.big_(i in I) U_i ==> K subset.eq U_(i_1) union dots.c union 
 
 
 class GlobalPage(QWidget):
-    rerender_requested = Signal()
-
     def __init__(
         self,
         service: CardService,
         render_runner: TaskRunner,
-        anki_runner: TaskRunner,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
-        self.rerenderer = Rerenderer(service)
         self.render_runner = render_runner
-        self.anki_runner = anki_runner
         self.sample_front = SAMPLE_FRONT
         self.sample_back = SAMPLE_BACK
         self.loading = False
@@ -54,8 +44,6 @@ class GlobalPage(QWidget):
         self.diagnostics_list.setMaximumHeight(100)
         self.diagnostics_list.setVisible(False)
         self.preview = CardPreview()
-        self.rerender_button = QPushButton()
-        self.rerender_button.setVisible(False)
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
@@ -67,21 +55,14 @@ class GlobalPage(QWidget):
         splitter.addWidget(self.preview)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
-        bottom = QHBoxLayout()
-        bottom.addStretch(1)
-        bottom.addWidget(self.rerender_button)
         layout = QVBoxLayout(self)
         layout.addWidget(splitter, 1)
-        layout.addLayout(bottom)
 
         self.write_timer = QTimer(self, singleShot=True, interval=WRITE_DEBOUNCE_MS)
         self.write_timer.timeout.connect(self.flush_writes)
-        self.staleness_timer = QTimer(self, singleShot=True, interval=STALENESS_DEBOUNCE_MS)
-        self.staleness_timer.timeout.connect(self.refresh_staleness)
         self.header_editor.textChanged.connect(self.on_header_edited)
         self.diagnostics_list.itemActivated.connect(self.on_diagnostic_activated)
         self.diagnostics_list.itemClicked.connect(self.on_diagnostic_activated)
-        self.rerender_button.clicked.connect(self.rerender_requested.emit)
 
         self.reload_from_disk()
 
@@ -112,7 +93,6 @@ class GlobalPage(QWidget):
         self.write_pending = False
         self.service.library.write_header(self.header_editor.toPlainText())
         self.request_render()
-        self.staleness_timer.start()
 
     def on_library_changed(self) -> None:
         if self.write_pending:
@@ -122,7 +102,6 @@ class GlobalPage(QWidget):
             self.request_render()
         else:
             self.reload_from_disk()
-        self.staleness_timer.start()
 
     def request_render(self) -> None:
         if self.render_in_flight:
@@ -177,15 +156,3 @@ class GlobalPage(QWidget):
     def reveal_diagnostic(self, diagnostic: Diagnostic) -> None:
         if diagnostic.file == HEADER_FILE_LABEL and diagnostic.line is not None:
             self.header_editor.jump_to(diagnostic.line, diagnostic.column or 1)
-
-    def refresh_staleness(self) -> None:
-        self.anki_runner.run(
-            self.rerenderer.staleness,
-            self.on_staleness,
-            lambda _error: self.rerender_button.setVisible(False),
-        )
-
-    def on_staleness(self, report: StalenessReport) -> None:
-        count = report.stale_count
-        self.rerender_button.setText(f"Re-render {count} card{'s' if count != 1 else ''}")
-        self.rerender_button.setVisible(count > 0)

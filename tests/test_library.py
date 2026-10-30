@@ -3,6 +3,7 @@ from pathlib import Path
 from typki.domain.card import CardDraft
 from typki.domain.preamble import DEFAULT_HEADER
 from typki.library.drafts import DraftStore
+from typki.library.outbox import Outbox
 from typki.library.store import Library
 
 
@@ -38,3 +39,16 @@ def test_draft_round_trip(tmp_path: Path) -> None:
     draft = CardDraft("Deck", "definition", ("a", "b"), "front «x»", "back", note_id=42)
     store.save(draft)
     assert store.load() == draft
+
+
+def test_outbox_keeps_latest_draft_per_card_in_order(tmp_path: Path) -> None:
+    outbox = Outbox(tmp_path / "outbox")
+    assert outbox.drafts() == [] and outbox.count() == 0
+    first = CardDraft("Deck", "", (), "first", "")
+    second = CardDraft("Deck", "", (), "second", "")
+    outbox.put(first)
+    outbox.put(second)
+    outbox.put(CardDraft("Deck", "", (), "first edited", "", source_id=first.source_id))
+    assert [draft.front for draft in outbox.drafts()] == ["second", "first edited"]
+    outbox.remove(second.source_id)
+    assert outbox.count() == 1

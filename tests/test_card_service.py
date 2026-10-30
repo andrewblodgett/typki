@@ -87,14 +87,14 @@ def test_edit_updates_in_place_and_keeps_history(
     note_id = service.save(make_draft()).note_id
     fake.notes[note_id].review_count = 7
     opened = service.open(note_id)
-    assert not opened.stale and not opened.drifted
+    assert not service.is_stale(opened, service.library.preamble())
     edited = CardDraft(
         deck_name="Real Analysis::Topology",
         template_name="definition",
         tags=("real-analysis", "topology"),
-        front=opened.card.front_source,
+        front=opened.front_source,
         back="Every open cover has a *finite* subcover.",
-        source_id=opened.card.source_id,
+        source_id=opened.source_id,
         note_id=note_id,
     )
     result = service.save(edited)
@@ -117,21 +117,19 @@ def test_edit_keeps_original_source_id(
     assert fake.notes[note_id].fields[note_type.SOURCE_ID] == original.source_id
 
 
-def test_open_detects_drift_from_edits_made_in_anki(
+def test_header_change_makes_card_stale(service: CardService) -> None:
+    note_id = service.save(make_draft()).note_id
+    service.library.write_header(service.library.read_header() + "#let changed = 1\n")
+    assert service.is_stale(service.open(note_id), service.library.preamble())
+
+
+def test_delete_removes_note(
     service: CardService, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
 ) -> None:
     _, fake = fake_ankiconnect
     note_id = service.save(make_draft()).note_id
-    fake.notes[note_id].fields[note_type.BACK] = "edited in Anki"
-    assert service.open(note_id).drifted
-
-
-def test_open_reports_stale_after_macro_change(service: CardService) -> None:
-    note_id = service.save(make_draft()).note_id
-    service.library.write_header(service.library.read_header() + "#let changed = 1\n")
-    opened = service.open(note_id)
-    assert opened.stale
-    assert not opened.drifted
+    service.delete(note_id)
+    assert note_id not in fake.notes
 
 
 def test_open_rejects_foreign_notes(

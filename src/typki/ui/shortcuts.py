@@ -13,9 +13,7 @@ class ShortcutAction:
 
 
 SHORTCUT_ACTIONS: tuple[ShortcutAction, ...] = (
-    ShortcutAction("save_and_next", "Save and next", "Ctrl+Return"),
-    ShortcutAction("save_and_stay", "Save and stay", "Ctrl+Shift+Return"),
-    ShortcutAction("new_card", "New card", "Ctrl+N"),
+    ShortcutAction("new_card", "New card", "Ctrl+Return"),
     ShortcutAction("focus_back", "Jump to back editor", "Ctrl+Down"),
     ShortcutAction("focus_front", "Jump to front editor", "Ctrl+Up"),
     ShortcutAction("focus_deck", "Choose deck", "Ctrl+D"),

@@ -106,6 +106,6 @@ def test_fields_written_by_rerender_match_fresh_save(service: CardService) -> No
     rerenderer = Rerenderer(service)
     rerenderer.run(rerenderer.staleness().stale_note_ids, apply=True)
     opened = service.open(note_id)
-    assert not opened.stale and not opened.drifted
-    assert opened.card.preamble_hash == service.library.preamble().hash
-    assert opened.card.renderer_version == service.renderer.renderer_version
+    fresh = service.render(opened.front_source, opened.back_source)
+    assert not service.is_stale(opened, service.library.preamble())
+    assert (opened.front_svg, opened.back_svg) == (fresh.front.svg, fresh.back.svg)

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from PySide6.QtCore import QByteArray, QEvent, QObject, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QImage, QKeyEvent, QPainter, QPixmap
+from PySide6.QtGui import QImage, QKeyEvent, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
@@ -48,8 +48,12 @@ def load_page(service: CardService, query: str, offset: int, color: str) -> Brow
     return BrowsePage(search=search, thumbnails=thumbnails)
 
 
+DELETE_SHORTCUT = "Ctrl+Delete"
+
+
 class BrowserPage(QWidget):
     open_requested = Signal(object)
+    delete_requested = Signal(object)
 
     def __init__(self, service: CardService, anki_runner: TaskRunner, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -76,6 +80,9 @@ class BrowserPage(QWidget):
         self.results.itemActivated.connect(self.on_item_activated)
         self.results.verticalScrollBar().valueChanged.connect(self.on_scrolled)
         self.search_edit.installEventFilter(self)
+        delete_shortcut = QShortcut(QKeySequence(DELETE_SHORTCUT), self.results)
+        delete_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        delete_shortcut.activated.connect(self.request_delete)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.search_edit and event.type() == QEvent.Type.KeyPress:
@@ -145,3 +152,15 @@ class BrowserPage(QWidget):
 
     def on_item_activated(self, item: QListWidgetItem) -> None:
         self.open_requested.emit(int(item.data(NOTE_ID_ROLE)))
+
+    def request_delete(self) -> None:
+        item = self.results.currentItem()
+        if item is not None:
+            self.delete_requested.emit(int(item.data(NOTE_ID_ROLE)))
+
+    def remove_note(self, note_id: int) -> None:
+        for row in range(self.results.count()):
+            if self.results.item(row).data(NOTE_ID_ROLE) == note_id:
+                self.results.takeItem(row)
+                self.total -= 1
+                return

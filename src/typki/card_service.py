@@ -1,3 +1,4 @@
+import threading
 from dataclasses import dataclass
 
 from typki.anki import note_type
@@ -46,13 +47,6 @@ class SaveResult:
 
 
 @dataclass(frozen=True)
-class OpenedCard:
-    card: StoredCard
-    stale: bool
-    drifted: bool
-
-
-@dataclass(frozen=True)
 class CardSummary:
     card: StoredCard
     stale: bool
@@ -91,6 +85,7 @@ class CardService:
         self.gateway = gateway
         self.library = library
         self.renderer = renderer
+        self.write_lock = threading.Lock()
 
     def check_note_type(self) -> NoteTypeHealth:
         model_names = self.gateway.model_names()
@@ -153,6 +148,10 @@ class CardService:
         )
 
     def save(self, draft: CardDraft) -> SaveResult:
+        with self.write_lock:
+            return self.save_unlocked(draft)
+
+    def save_unlocked(self, draft: CardDraft) -> SaveResult:
         card_render = self.render(draft.front, draft.back)
         if not card_render.ok:
             raise RenderFailedError(card_render)
@@ -216,14 +215,12 @@ class CardService:
             raise NotTypkiNoteError(f"Note {note_id} was not created by Typki and is read-only.")
         return record
 
-    def open(self, note_id: int) -> OpenedCard:
-        card = to_stored_card(self.require_typki_record(note_id))
-        preamble = self.library.preamble()
-        if self.is_stale(card, preamble):
-            return OpenedCard(card=card, stale=True, drifted=False)
-        fresh = self.render_with(preamble, card.front_source, card.back_source)
-        drifted = fresh.ok and (fresh.front.svg != card.front_svg or fresh.back.svg != card.back_svg)
-        return OpenedCard(card=card, stale=False, drifted=drifted)
+    def open(self, note_id: int) -> StoredCard:
+        return to_stored_card(self.require_typki_record(note_id))
+
+    def delete(self, note_id: int) -> None:
+        with self.write_lock:
+            self.gateway.delete_notes([note_id])
 
     def search(self, query: str, offset: int = 0, limit: int = DEFAULT_SEARCH_LIMIT) -> SearchResult:
         note_ids = sorted(self.gateway.find_notes(f"{note_type_query()} {query}".strip()), reverse=True)

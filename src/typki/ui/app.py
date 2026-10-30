@@ -10,6 +10,7 @@ from typki.anki.ankiconnect import DEFAULT_URL, AnkiConnectGateway
 from typki.anki.fake_anki import running_fake_ankiconnect
 from typki.card_service import CardService
 from typki.library.drafts import DraftStore
+from typki.library.outbox import Outbox
 from typki.library.store import Library
 from typki.render.compiler import Renderer
 from typki.ui.background import TaskRunner
@@ -17,12 +18,14 @@ from typki.ui.browser import BrowserPage
 from typki.ui.capture import CapturePage
 from typki.ui.global_page import GlobalPage
 from typki.ui.main_window import MainWindow
+from typki.ui.save_queue import SaveQueue
 from typki.ui.shortcuts import load_shortcuts
 
 APP_NAME = "typki"
 LIBRARY_SETTING = "library_path"
 DEFAULT_LIBRARY = Path.home() / "typki-library"
 DRAFT_FILENAME = "draft.json"
+OUTBOX_DIRNAME = "outbox"
 
 
 def parse_arguments(argv: list[str]) -> argparse.Namespace:
@@ -68,23 +71,26 @@ def main(argv: list[str] | None = None) -> int:
         service = CardService(gateway, library, renderer)
         state_dir = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation))
         draft_store = DraftStore(state_dir / DRAFT_FILENAME)
+        outbox = Outbox(state_dir / OUTBOX_DIRNAME)
 
         def report_error(error: Exception) -> None:
-            QMessageBox.warning(None, "Typki", str(error))
+            print(f"typki: {error}", file=sys.stderr)
 
         render_runner = TaskRunner(1, report_error)
         anki_runner = TaskRunner(2, report_error)
         shortcuts, shortcut_problems = load_shortcuts(library.root)
 
-        capture = CapturePage(service, render_runner, anki_runner, draft_store)
+        save_queue = SaveQueue(service, anki_runner, outbox)
+        capture = CapturePage(service, render_runner, save_queue, draft_store)
         browser = BrowserPage(service, anki_runner)
-        global_page = GlobalPage(service, render_runner, anki_runner)
+        global_page = GlobalPage(service, render_runner)
         window = MainWindow(
             gateway,
             service,
             capture,
             browser,
             global_page,
+            save_queue,
             anki_runner,
             render_runner,
             shortcuts,
