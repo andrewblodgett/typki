@@ -93,7 +93,6 @@ class CapturePage(QWidget):
         self.saved_snapshot: Snapshot | None = None
         self.last_render_ok = False
         self.restoring = False
-        self.template_name = BLANK.name
 
         self.deck_combo = DeckComboBox()
         self.deck_combo.setMinimumWidth(240)
@@ -133,9 +132,9 @@ class CapturePage(QWidget):
         self.draft_timer = debouncer(self, DRAFT_SAVE_DEBOUNCE_MS, self.save_draft)
         self.tags_edit.textChanged.connect(self.on_metadata_changed)
         self.deck_combo.currentTextChanged.connect(self.on_metadata_changed)
-        self.template_combo.activated.connect(self.on_template_chosen)
+        self.template_combo.activated.connect(lambda _index: self.discard_card(self.template_key()))
         self.diagnostics_list.revealed.connect(self.reveal_diagnostic)
-        self.save_new_button.clicked.connect(lambda: self.new_card())
+        self.save_new_button.clicked.connect(self.new_card)
         save_queue.saved.connect(self.on_saved)
 
     def fill_template_combo(self) -> None:
@@ -214,7 +213,6 @@ class CapturePage(QWidget):
             self.back_editor.setPlainText(draft.back)
             self.front_editor.set_source(draft.front)
             self.source_id, self.note_id = draft.source_id, draft.note_id
-        self.template_name = draft.template_name
         self.saved_snapshot = self.snapshot() if saved else None
         self.front_editor.setFocus()
         self.request_render()
@@ -231,16 +229,15 @@ class CapturePage(QWidget):
         index = self.template_combo.findData(find_template(name, self.templates).name)
         self.template_combo.setCurrentIndex(max(index, 0))
 
-    def on_template_chosen(self, _index: int) -> None:
-        chosen = self.template_key()
-        self.select_template_key(self.template_name)
-        self.new_card(chosen)
-
-    def new_card(self, template_name: str | None = None) -> None:
+    def new_card(self) -> None:
         if not self.can_leave_card():
             return
         self.flush()
-        self.start_new_card(self.template_key() if template_name is None else template_name)
+        self.start_new_card(self.template_key())
+
+    def discard_card(self, template_name: str) -> None:
+        self.autosave_timer.stop()
+        self.start_new_card(template_name)
 
     def start_new_card(self, template_name: str) -> None:
         template = find_template(template_name, self.templates)
@@ -255,8 +252,7 @@ class CapturePage(QWidget):
 
     def discard_if_showing(self, note_id: int) -> None:
         if self.note_id == note_id:
-            self.autosave_timer.stop()
-            self.start_new_card(BLANK.name)
+            self.discard_card(BLANK.name)
 
     def on_source_changed(self) -> None:
         if self.restoring:

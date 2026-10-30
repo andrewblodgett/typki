@@ -21,6 +21,7 @@ from typki.card_service import CardService
 from typki.domain.card import CardDraft
 from typki.library.outbox import Outbox
 from typki.render.diagnostics import Diagnostic
+from typki.ui.capture import CapturePage
 from typki.ui.editor import TypstEditor
 from typki.ui.main_window import MainWindow
 from typki.ui.setup_page import INSTALL_STEPS, UPDATE_STEPS
@@ -75,6 +76,11 @@ def type_card(window: MainWindow, deck: str, front: str, back: str = "") -> None
     capture.back_editor.setPlainText(back)
 
 
+def choose_template(capture: CapturePage, name: str) -> None:
+    capture.template_combo.setCurrentIndex(capture.template_combo.findData(name))
+    capture.template_combo.activated.emit(capture.template_combo.currentIndex())
+
+
 def note_with_front(fake: FakeAnki, front: str) -> list[int]:
     return [note_id for note_id, note in fake.notes.items() if note.fields[note_type.FRONT_SOURCE] == front]
 
@@ -120,26 +126,26 @@ def test_compile_error_is_not_saved(
     assert not fake.notes
 
 
-def test_template_starts_new_card_and_placeholders_block_saving(
+def test_switching_template_discards_the_current_card(
     qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
 ) -> None:
     _, fake = fake_ankiconnect
     capture = window.capture
-    type_card(window, "Real Analysis", "first card", "first answer")
-    capture.template_combo.setCurrentIndex(capture.template_combo.findData("Theorem"))
-    capture.template_combo.activated.emit(capture.template_combo.currentIndex())
-    qtbot.waitUntil(lambda: len(note_with_front(fake, "first card")) == 1, timeout=WAIT_MS)
+    type_card(window, "Real Analysis", "half written card")
+    choose_template(capture, "Theorem")
     assert capture.front_editor.toPlainText() == "#Theorem[«name»][«statement»]"
     assert capture.front_editor.textCursor().selectedText() == "«name»"
     assert capture.back_editor.toPlainText() == ""
     assert capture.tags_edit.text().split()[-1] == "Theorem"
+    type_card(window, "Real Analysis", "complete card", "with an answer")
+    choose_template(capture, "Definition")
+    assert capture.front_editor.toPlainText() == "#Definition[«term»][«body»]"
     qtbot.wait(800)
-    assert len(fake.notes) == 1
-    capture.front_editor.setPlainText("#Theorem[Rolle][$f(a) = f(b) ==> exists c : f'(c) = 0$]")
-    capture.back_editor.setPlainText("Apply the mean value theorem.")
-    qtbot.waitUntil(lambda: len(fake.notes) == 2, timeout=WAIT_MS)
-    newest = fake.notes[max(fake.notes)]
-    assert "Theorem" in newest.tags
+    assert not fake.notes
+    capture.front_editor.setPlainText("#Definition[Field][a commutative division ring]")
+    capture.back_editor.setPlainText("Example: the rationals.")
+    qtbot.waitUntil(lambda: len(fake.notes) == 1, timeout=WAIT_MS)
+    assert "Definition" in next(iter(fake.notes.values())).tags
 
 
 def test_new_card_shortcut_saves_immediately_and_resets(
@@ -610,10 +616,9 @@ def test_card_without_back_is_kept_and_never_saved(
     qtbot.waitUntil(lambda: len(note_with_front(fake, "question with no answer")) == 1, timeout=WAIT_MS)
 
 
-def test_unfilled_template_blocks_switching_but_blank_card_does_not(window: MainWindow) -> None:
+def test_save_and_new_keeps_unfilled_template_but_resets_blank_card(window: MainWindow) -> None:
     capture = window.capture
-    capture.template_combo.setCurrentIndex(capture.template_combo.findData("Theorem"))
-    capture.template_combo.activated.emit(capture.template_combo.currentIndex())
+    choose_template(capture, "Theorem")
     assert capture.front_editor.toPlainText() == "#Theorem[«name»][«statement»]"
     capture.back_editor.setPlainText("an answer")
     capture.new_card()
