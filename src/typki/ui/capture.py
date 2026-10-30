@@ -1,10 +1,10 @@
 from collections.abc import Sequence
 
 from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
-    QFormLayout,
-    QLabel,
+    QHBoxLayout,
     QListWidget,
     QListWidgetItem,
     QSplitter,
@@ -31,6 +31,7 @@ from typki.ui.editor import TypstEditor
 from typki.ui.preview import CardPreview
 from typki.ui.save_queue import SaveQueue
 from typki.ui.tags_edit import TagsEdit
+from typki.ui.theme import DEFAULT_THEME, Theme
 
 RENDER_DEBOUNCE_MS = 60
 AUTOSAVE_DEBOUNCE_MS = 400
@@ -39,6 +40,7 @@ DEFAULT_DECK = "Default"
 FRONT = "front"
 BACK = "back"
 DIAGNOSTIC_ROLE = Qt.ItemDataRole.UserRole
+EQUAL_SPLIT = 100_000
 
 Snapshot = tuple[str, tuple[str, ...], str, str]
 
@@ -67,17 +69,26 @@ class CapturePage(QWidget):
         self.render_in_flight = False
         self.render_pending = False
         self.restoring = False
+        self.theme = DEFAULT_THEME
 
         self.deck_combo = QComboBox()
         self.deck_combo.setEditable(True)
         self.deck_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.deck_combo.setMinimumWidth(220)
+        self.deck_combo.setMinimumWidth(240)
+        deck_line_edit = self.deck_combo.lineEdit()
+        if deck_line_edit is not None:
+            deck_line_edit.setPlaceholderText("Deck")
         self.template_combo = QComboBox()
+        self.template_combo.setMinimumWidth(160)
         self.fill_template_combo()
         self.tags_edit = TagsEdit()
+        self.tags_edit.setPlaceholderText("Tags")
         self.front_editor = TypstEditor()
+        self.front_editor.setPlaceholderText("Front")
         self.back_editor = TypstEditor()
+        self.back_editor.setPlaceholderText("Back")
         self.diagnostics_list = QListWidget()
+        self.diagnostics_list.setObjectName("diagnostics")
         self.diagnostics_list.setMaximumHeight(110)
         self.diagnostics_list.setVisible(False)
         self.preview = CardPreview()
@@ -101,28 +112,31 @@ class CapturePage(QWidget):
         save_queue.saved.connect(self.on_saved)
 
     def build_layout(self) -> None:
-        form = QFormLayout()
-        form.addRow("Deck", self.deck_combo)
-        form.addRow("Template", self.template_combo)
-        form.addRow("Tags", self.tags_edit)
+        card_fields = QHBoxLayout()
+        card_fields.setSpacing(8)
+        card_fields.addWidget(self.deck_combo)
+        card_fields.addWidget(self.template_combo)
+        card_fields.addWidget(self.tags_edit, 1)
 
         editors = QWidget()
         editors_layout = QVBoxLayout(editors)
         editors_layout.setContentsMargins(0, 0, 0, 0)
-        editors_layout.addWidget(QLabel("Front"))
+        editors_layout.setSpacing(8)
+        editors_layout.addLayout(card_fields)
         editors_layout.addWidget(self.front_editor, 1)
-        editors_layout.addWidget(QLabel("Back"))
         editors_layout.addWidget(self.back_editor, 1)
         editors_layout.addWidget(self.diagnostics_list)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(16)
         splitter.addWidget(editors)
         splitter.addWidget(self.preview)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
+        splitter.setSizes([EQUAL_SPLIT, EQUAL_SPLIT])
 
         layout = QVBoxLayout(self)
-        layout.addLayout(form)
+        layout.setContentsMargins(16, 12, 16, 4)
         layout.addWidget(splitter, 1)
 
     def fill_template_combo(self) -> None:
@@ -334,8 +348,8 @@ class CapturePage(QWidget):
             side_label = f"{side.capitalize()} " if side and diagnostic.in_card else ""
             item = QListWidgetItem(f"{side_label}{diagnostic.describe()}")
             item.setData(DIAGNOSTIC_ROLE, (side, diagnostic))
-            color = Qt.GlobalColor.red if diagnostic.severity == "error" else Qt.GlobalColor.darkYellow
-            item.setForeground(color)
+            color = self.theme.error if diagnostic.severity == "error" else self.theme.warning
+            item.setForeground(QColor(color))
             self.diagnostics_list.addItem(item)
         self.diagnostics_list.setVisible(bool(lines))
 
@@ -352,8 +366,15 @@ class CapturePage(QWidget):
     def focus_back(self) -> None:
         self.back_editor.setFocus()
 
-    def toggle_dark(self) -> None:
-        self.preview.dark_toggle.toggle()
+    def set_theme(self, theme: Theme) -> None:
+        self.theme = theme
+        self.front_editor.set_theme(theme)
+        self.back_editor.set_theme(theme)
+        self.preview.set_theme(theme)
+        for row in range(self.diagnostics_list.count()):
+            item = self.diagnostics_list.item(row)
+            _side, diagnostic = item.data(DIAGNOSTIC_ROLE)
+            item.setForeground(QColor(theme.error if diagnostic.severity == "error" else theme.warning))
 
     def toggle_phone(self) -> None:
         self.preview.phone_toggle.toggle()

@@ -3,12 +3,13 @@ from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from typki.anki.gateway import AnkiConnectTooOldError, AnkiUnavailableError, NotAnkiConnectError
+from typki.ui.theme import Theme, code_font
 
 ANKICONNECT_CODE = "2055492159"
 ANKI_DOWNLOAD_URL = "https://apps.ankiweb.net"
-TITLE_STYLE = "font-size: 20pt; font-weight: 600;"
+TITLE_STYLE = "font-size: 22pt; font-weight: 600;"
 STEP_STYLE = "font-size: 12pt;"
-STATUS_STYLE = "color: palette(placeholder-text);"
+CODE_POINT_SIZE = 16
 
 INSTALL_STEPS = (
     f'Open Anki. If you don\'t have it, get it from <a href="{ANKI_DOWNLOAD_URL}">apps.ankiweb.net</a>.',
@@ -46,7 +47,6 @@ class SetupPage(QWidget):
         self.steps_box.setSpacing(14)
         self.code_row = self.build_code_row()
         self.status = QLabel()
-        self.status.setStyleSheet(STATUS_STYLE)
         self.offline_button = QPushButton("Continue offline")
         self.offline_button.setFlat(True)
         self.offline_button.clicked.connect(self.dismissed)
@@ -71,7 +71,9 @@ class SetupPage(QWidget):
 
     def build_code_row(self) -> QWidget:
         code = QLabel(ANKICONNECT_CODE)
-        code.setStyleSheet("font-family: monospace; font-size: 16pt;")
+        font = code_font()
+        font.setPointSize(CODE_POINT_SIZE)
+        code.setFont(font)
         code.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.copy_button = QPushButton("Copy")
         self.copy_button.clicked.connect(self.copy_code)
@@ -110,3 +112,6 @@ class SetupPage(QWidget):
             if steps is INSTALL_STEPS and number == 2:
                 self.steps_box.addWidget(self.code_row)
         self.code_row.setVisible(steps is INSTALL_STEPS)
+
+    def set_theme(self, theme: Theme) -> None:
+        self.status.setStyleSheet(f"color: {theme.muted};")

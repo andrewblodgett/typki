@@ -3,15 +3,17 @@ from dataclasses import dataclass
 from PySide6.QtCore import QByteArray, QEvent, QObject, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QKeyEvent, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLineEdit, QListView, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
 from typki.card_service import CardService, SearchResult
 from typki.render.svg_postprocess import svg_for_display
 from typki.ui.background import TaskRunner
 
-THUMBNAIL_WIDTH = 280
-THUMBNAIL_MAX_HEIGHT = 120
-THUMBNAIL_PIXELS_PER_POINT = 1.1
+THUMBNAIL_WIDTH = 320
+THUMBNAIL_MAX_HEIGHT = 150
+THUMBNAIL_PIXELS_PER_POINT = 1.2
+TILE_PADDING = 28
+TILE_CAPTION_HEIGHT = 40
 SEARCH_DEBOUNCE_MS = 250
 PAGE_SIZE = 40
 LOAD_MORE_MARGIN = 3
@@ -34,10 +36,16 @@ def render_thumbnail(svg_text: str, color: str) -> QImage:
     size = renderer.defaultSize()
     if size.width() <= 0:
         return image
-    scale = min(THUMBNAIL_PIXELS_PER_POINT, THUMBNAIL_WIDTH / size.width())
+    scale = min(
+        THUMBNAIL_PIXELS_PER_POINT,
+        THUMBNAIL_WIDTH / size.width(),
+        THUMBNAIL_MAX_HEIGHT / max(size.height(), 1),
+    )
+    width, height = size.width() * scale, size.height() * scale
+    left, top = (THUMBNAIL_WIDTH - width) / 2, (THUMBNAIL_MAX_HEIGHT - height) / 2
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    renderer.render(painter, QRectF(0, 0, size.width() * scale, size.height() * scale))
+    renderer.render(painter, QRectF(left, top, width, height))
     painter.end()
     return image
 
@@ -64,12 +72,23 @@ class BrowserPage(QWidget):
         self.total = 0
         self.search_edit = QLineEdit()
         self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setPlaceholderText("Search")
         self.results = QListWidget()
+        self.results.setObjectName("cards")
+        self.results.setViewMode(QListView.ViewMode.IconMode)
+        self.results.setMovement(QListView.Movement.Static)
+        self.results.setResizeMode(QListView.ResizeMode.Adjust)
+        self.results.setWrapping(True)
+        self.results.setWordWrap(False)
         self.results.setIconSize(QSize(THUMBNAIL_WIDTH, THUMBNAIL_MAX_HEIGHT))
-        self.results.setSpacing(4)
+        self.results.setGridSize(
+            QSize(THUMBNAIL_WIDTH + TILE_PADDING, THUMBNAIL_MAX_HEIGHT + TILE_PADDING + TILE_CAPTION_HEIGHT)
+        )
         self.results.setUniformItemSizes(True)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 4)
+        layout.setSpacing(8)
         layout.addWidget(self.search_edit)
         layout.addWidget(self.results, 1)
 

@@ -1,0 +1,399 @@
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+from PySide6.QtCore import QStandardPaths
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
+from PySide6.QtWidgets import QApplication
+
+UI_FONT_FAMILIES = ("Inter", "Inter Variable", "SF Pro Text", "Segoe UI Variable", "Cantarell", "Noto Sans")
+CODE_FONT_FAMILIES = (
+    "JetBrains Mono",
+    "Cascadia Code",
+    "Fira Code",
+    "Iosevka",
+    "SF Mono",
+    "Source Code Pro",
+    "Fira Mono",
+    "Ubuntu Mono",
+)
+CHEVRON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12">'
+    '<path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="{color}" stroke-width="1.6" '
+    'stroke-linecap="round" stroke-linejoin="round"/></svg>'
+)
+UI_FONT_POINT_SIZE = 10.5
+CODE_FONT_POINT_SIZE = 11.5
+
+
+@dataclass(frozen=True)
+class Theme:
+    name: str
+    dark: bool
+    chrome: str
+    panel: str
+    raised: str
+    border: str
+    selection: str
+    text: str
+    muted: str
+    accent: str
+    error: str
+    warning: str
+    keyword: str
+    function: str
+    string: str
+    number: str
+    math: str
+    comment: str
+    heading: str
+
+
+THEMES: tuple[Theme, ...] = (
+    Theme(
+        name="Rosé Pine",
+        dark=True,
+        chrome="#191724",
+        panel="#1f1d2e",
+        raised="#26233a",
+        border="#403d52",
+        selection="#403d52",
+        text="#e0def4",
+        muted="#908caa",
+        accent="#c4a7e7",
+        error="#eb6f92",
+        warning="#f6c177",
+        keyword="#c4a7e7",
+        function="#ebbcba",
+        string="#f6c177",
+        number="#eb6f92",
+        math="#9ccfd8",
+        comment="#6e6a86",
+        heading="#ebbcba",
+    ),
+    Theme(
+        name="Catppuccin Mocha",
+        dark=True,
+        chrome="#181825",
+        panel="#1e1e2e",
+        raised="#313244",
+        border="#45475a",
+        selection="#45475a",
+        text="#cdd6f4",
+        muted="#9399b2",
+        accent="#cba6f7",
+        error="#f38ba8",
+        warning="#f9e2af",
+        keyword="#cba6f7",
+        function="#89b4fa",
+        string="#a6e3a1",
+        number="#fab387",
+        math="#94e2d5",
+        comment="#6c7086",
+        heading="#f38ba8",
+    ),
+    Theme(
+        name="Tokyo Night",
+        dark=True,
+        chrome="#16161e",
+        panel="#1a1b26",
+        raised="#292e42",
+        border="#3b4261",
+        selection="#33467c",
+        text="#c0caf5",
+        muted="#737aa2",
+        accent="#7aa2f7",
+        error="#f7768e",
+        warning="#e0af68",
+        keyword="#bb9af7",
+        function="#7aa2f7",
+        string="#9ece6a",
+        number="#ff9e64",
+        math="#7dcfff",
+        comment="#565f89",
+        heading="#ff9e64",
+    ),
+    Theme(
+        name="Nord",
+        dark=True,
+        chrome="#2e3440",
+        panel="#3b4252",
+        raised="#434c5e",
+        border="#4c566a",
+        selection="#4c566a",
+        text="#eceff4",
+        muted="#9aa3b5",
+        accent="#88c0d0",
+        error="#bf616a",
+        warning="#ebcb8b",
+        keyword="#81a1c1",
+        function="#88c0d0",
+        string="#a3be8c",
+        number="#b48ead",
+        math="#8fbcbb",
+        comment="#7b88a1",
+        heading="#d08770",
+    ),
+    Theme(
+        name="Everforest",
+        dark=True,
+        chrome="#2d353b",
+        panel="#343f44",
+        raised="#3d484d",
+        border="#475258",
+        selection="#475258",
+        text="#d3c6aa",
+        muted="#859289",
+        accent="#a7c080",
+        error="#e67e80",
+        warning="#dbbc7f",
+        keyword="#e67e80",
+        function="#a7c080",
+        string="#83c092",
+        number="#d699b6",
+        math="#7fbbb3",
+        comment="#859289",
+        heading="#e69875",
+    ),
+    Theme(
+        name="Gruvbox",
+        dark=True,
+        chrome="#282828",
+        panel="#32302f",
+        raised="#3c3836",
+        border="#504945",
+        selection="#504945",
+        text="#ebdbb2",
+        muted="#a89984",
+        accent="#fabd2f",
+        error="#fb4934",
+        warning="#fabd2f",
+        keyword="#fb4934",
+        function="#fabd2f",
+        string="#b8bb26",
+        number="#d3869b",
+        math="#83a598",
+        comment="#928374",
+        heading="#fe8019",
+    ),
+    Theme(
+        name="Kanagawa",
+        dark=True,
+        chrome="#16161d",
+        panel="#1f1f28",
+        raised="#2a2a37",
+        border="#363646",
+        selection="#2d4f67",
+        text="#dcd7ba",
+        muted="#727169",
+        accent="#7e9cd8",
+        error="#ff5d62",
+        warning="#e6c384",
+        keyword="#957fb8",
+        function="#7e9cd8",
+        string="#98bb6c",
+        number="#d27e99",
+        math="#7fb4ca",
+        comment="#727169",
+        heading="#ffa066",
+    ),
+    Theme(
+        name="Rosé Pine Dawn",
+        dark=False,
+        chrome="#faf4ed",
+        panel="#fffaf3",
+        raised="#f2e9e1",
+        border="#dfdad9",
+        selection="#dfdad9",
+        text="#575279",
+        muted="#797593",
+        accent="#907aa9",
+        error="#b4637a",
+        warning="#ea9d34",
+        keyword="#907aa9",
+        function="#d7827e",
+        string="#ea9d34",
+        number="#b4637a",
+        math="#56949f",
+        comment="#9893a5",
+        heading="#286983",
+    ),
+    Theme(
+        name="Catppuccin Latte",
+        dark=False,
+        chrome="#e6e9ef",
+        panel="#eff1f5",
+        raised="#ccd0da",
+        border="#bcc0cc",
+        selection="#ccd0da",
+        text="#4c4f69",
+        muted="#7c7f93",
+        accent="#8839ef",
+        error="#d20f39",
+        warning="#df8e1d",
+        keyword="#8839ef",
+        function="#1e66f5",
+        string="#40a02b",
+        number="#fe640b",
+        math="#179299",
+        comment="#9ca0b0",
+        heading="#d20f39",
+    ),
+)
+DEFAULT_THEME = THEMES[0]
+
+
+def find_theme(name: object) -> Theme:
+    return next((theme for theme in THEMES if theme.name == name), DEFAULT_THEME)
+
+
+def first_installed_family(candidates: tuple[str, ...]) -> str | None:
+    installed = set(QFontDatabase.families())
+    return next((family for family in candidates if family in installed), None)
+
+
+def ui_font() -> QFont:
+    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+    family = first_installed_family(UI_FONT_FAMILIES)
+    if family is not None:
+        font.setFamily(family)
+    font.setPointSizeF(UI_FONT_POINT_SIZE)
+    return font
+
+
+def code_font() -> QFont:
+    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+    family = first_installed_family(CODE_FONT_FAMILIES)
+    if family is not None:
+        font.setFamily(family)
+    font.setPointSizeF(CODE_FONT_POINT_SIZE)
+    return font
+
+
+def icon_directory() -> Path:
+    cache = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.CacheLocation)
+    return Path(cache or tempfile.gettempdir()) / "typki-icons"
+
+
+def chevron_path(color: str) -> str:
+    path = icon_directory() / f"chevron-{color.lstrip('#')}.svg"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(CHEVRON_SVG.format(color=color))
+    return path.as_posix()
+
+
+def palette_for(theme: Theme) -> QPalette:
+    palette = QPalette()
+    roles = {
+        QPalette.ColorRole.Window: theme.chrome,
+        QPalette.ColorRole.WindowText: theme.text,
+        QPalette.ColorRole.Base: theme.panel,
+        QPalette.ColorRole.AlternateBase: theme.raised,
+        QPalette.ColorRole.Text: theme.text,
+        QPalette.ColorRole.Button: theme.raised,
+        QPalette.ColorRole.ButtonText: theme.text,
+        QPalette.ColorRole.BrightText: theme.error,
+        QPalette.ColorRole.Highlight: theme.selection,
+        QPalette.ColorRole.HighlightedText: theme.text,
+        QPalette.ColorRole.PlaceholderText: theme.muted,
+        QPalette.ColorRole.Link: theme.accent,
+        QPalette.ColorRole.LinkVisited: theme.accent,
+        QPalette.ColorRole.ToolTipBase: theme.raised,
+        QPalette.ColorRole.ToolTipText: theme.text,
+        QPalette.ColorRole.Light: theme.raised,
+        QPalette.ColorRole.Midlight: theme.raised,
+        QPalette.ColorRole.Mid: theme.border,
+        QPalette.ColorRole.Dark: theme.chrome,
+        QPalette.ColorRole.Shadow: theme.chrome,
+    }
+    for role, color in roles.items():
+        palette.setColor(role, QColor(color))
+    for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(theme.muted))
+    return palette
+
+
+def stylesheet_for(theme: Theme) -> str:
+    chevron = chevron_path(theme.muted)
+    return f"""
+QMainWindow, QStackedWidget, QTabWidget::pane {{ background: {theme.chrome}; border: none; }}
+QLabel {{ background: transparent; }}
+QStatusBar {{ background: {theme.chrome}; border: none; }}
+QStatusBar QLabel {{ color: {theme.muted}; padding: 2px 12px 6px 12px; }}
+QTabBar {{ background: transparent; qproperty-drawBase: 0; }}
+QTabBar::tab {{
+  background: transparent; color: {theme.muted}; border: none;
+  border-bottom: 2px solid transparent; padding: 10px 4px 8px 4px; margin: 0 10px;
+}}
+QTabBar::tab:first {{ margin-left: 16px; }}
+QTabBar::tab:selected {{ color: {theme.text}; border-bottom: 2px solid {theme.accent}; }}
+QTabBar::tab:hover:!selected {{ color: {theme.text}; }}
+QPlainTextEdit, QLineEdit, QComboBox, QListWidget {{
+  background: {theme.panel}; color: {theme.text}; border: 1px solid {theme.panel}; border-radius: 10px;
+  selection-background-color: {theme.selection}; selection-color: {theme.text};
+}}
+QPlainTextEdit {{ padding: 10px 12px; }}
+QLineEdit {{ padding: 7px 12px; }}
+QComboBox {{ padding: 7px 12px; }}
+QComboBox:editable {{ background: {theme.panel}; }}
+QComboBox::drop-down {{ border: none; width: 28px; }}
+QComboBox::down-arrow {{ image: url("{chevron}"); width: 12px; height: 12px; }}
+QPlainTextEdit:focus, QLineEdit:focus, QComboBox:focus, QComboBox:on {{ border: 1px solid {theme.accent}; }}
+QComboBox QAbstractItemView {{
+  background: {theme.raised}; color: {theme.text}; border: 1px solid {theme.border};
+  padding: 4px; outline: 0; selection-background-color: {theme.selection};
+}}
+QListWidget {{ padding: 6px; outline: 0; }}
+QListWidget::item {{ padding: 10px; border-radius: 8px; color: {theme.muted}; }}
+QListWidget::item:selected {{ background: {theme.raised}; color: {theme.text}; }}
+QListWidget::item:hover:!selected {{ background: {theme.raised}; }}
+QListWidget#cards {{ background: transparent; border: none; padding: 0; }}
+QListWidget#cards::item {{
+  background: {theme.panel}; border: 1px solid {theme.panel}; border-radius: 12px; margin: 5px; padding: 6px;
+}}
+QListWidget#cards::item:hover {{ background: {theme.raised}; border-color: {theme.raised}; }}
+QListWidget#cards::item:selected {{
+  background: {theme.raised}; border-color: {theme.accent}; color: {theme.text};
+}}
+QListWidget#diagnostics {{ background: transparent; border: none; padding: 4px 0 0 0; }}
+QListWidget#diagnostics::item {{ padding: 3px 6px; border-radius: 6px; }}
+QListWidget#diagnostics::item:selected, QListWidget#diagnostics::item:hover {{ background: {theme.raised}; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 4px 2px; }}
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px 4px; }}
+QScrollBar::handle {{ background: {theme.border}; border-radius: 3px; }}
+QScrollBar::handle:vertical {{ min-height: 32px; }}
+QScrollBar::handle:horizontal {{ min-width: 32px; }}
+QScrollBar::handle:hover {{ background: {theme.muted}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
+QSplitter::handle {{ background: transparent; }}
+QPushButton {{
+  background: {theme.raised}; color: {theme.text}; border: none; border-radius: 8px; padding: 7px 16px;
+}}
+QPushButton:hover {{ background: {theme.border}; }}
+QPushButton:flat {{ background: transparent; color: {theme.muted}; padding: 7px 0; }}
+QPushButton:flat:hover {{ color: {theme.text}; }}
+QToolButton {{
+  background: transparent; color: {theme.muted}; border: none; border-radius: 8px; padding: 5px 10px;
+}}
+QToolButton:hover {{ background: {theme.raised}; color: {theme.text}; }}
+QToolButton:checked {{ color: {theme.accent}; }}
+QToolButton::menu-indicator {{ image: none; width: 0; }}
+QMenu {{ background: {theme.raised}; color: {theme.text}; border: 1px solid {theme.border}; padding: 6px; }}
+QMenu::item {{ padding: 6px 28px 6px 14px; border-radius: 6px; }}
+QMenu::item:selected {{ background: {theme.selection}; }}
+QMenu::item:disabled {{ color: {theme.muted}; }}
+QMenu::separator {{ height: 1px; background: {theme.border}; margin: 5px 8px; }}
+QToolTip {{
+  background: {theme.raised}; color: {theme.text}; border: 1px solid {theme.border}; padding: 5px 8px;
+}}
+"""
+
+
+def apply_to_application(app: QApplication, theme: Theme) -> None:
+    if app.style().name().lower() != "fusion":
+        app.setStyle("Fusion")
+    app.setFont(ui_font())
+    app.setPalette(palette_for(theme))
+    app.setStyleSheet(stylesheet_for(theme))

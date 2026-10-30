@@ -23,8 +23,7 @@ SHORTCUT_ACTIONS: tuple[ShortcutAction, ...] = (
     ShortcutAction("show_browse", "Show browser", "Ctrl+2"),
     ShortcutAction("show_global", "Show global header", "Ctrl+3"),
     ShortcutAction("search", "Search cards", "Ctrl+F"),
-    ShortcutAction("toggle_dark", "Toggle dark preview", "Ctrl+Shift+D"),
-    ShortcutAction("toggle_phone", "Toggle phone-width preview", "Ctrl+Shift+P"),
+    ShortcutAction("toggle_phone", "Phone-width preview", "Ctrl+Shift+P"),
 )
 
 

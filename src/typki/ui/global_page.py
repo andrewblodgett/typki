@@ -1,4 +1,5 @@
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
     QListWidget,
@@ -13,9 +14,11 @@ from typki.render.diagnostics import HEADER_FILE_LABEL, Diagnostic
 from typki.ui.background import TaskRunner
 from typki.ui.editor import TypstEditor
 from typki.ui.preview import CardPreview
+from typki.ui.theme import DEFAULT_THEME, Theme
 
 WRITE_DEBOUNCE_MS = 250
 DIAGNOSTIC_ROLE = Qt.ItemDataRole.UserRole
+EQUAL_SPLIT = 100_000
 
 SAMPLE_FRONT = "*Define* a compact set $K subset RR$."
 SAMPLE_BACK = """$K$ is *compact* if every open cover of $K$ has a finite subcover:
@@ -38,9 +41,11 @@ class GlobalPage(QWidget):
         self.write_pending = False
         self.render_in_flight = False
         self.render_pending = False
+        self.theme = DEFAULT_THEME
 
         self.header_editor = TypstEditor()
         self.diagnostics_list = QListWidget()
+        self.diagnostics_list.setObjectName("diagnostics")
         self.diagnostics_list.setMaximumHeight(100)
         self.diagnostics_list.setVisible(False)
         self.preview = CardPreview()
@@ -48,14 +53,18 @@ class GlobalPage(QWidget):
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
         left_layout.addWidget(self.header_editor, 1)
         left_layout.addWidget(self.diagnostics_list)
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(16)
         splitter.addWidget(left)
         splitter.addWidget(self.preview)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
+        splitter.setSizes([EQUAL_SPLIT, EQUAL_SPLIT])
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 4)
         layout.addWidget(splitter, 1)
 
         self.write_timer = QTimer(self, singleShot=True, interval=WRITE_DEBOUNCE_MS)
@@ -145,8 +154,8 @@ class GlobalPage(QWidget):
             item.setData(DIAGNOSTIC_ROLE, diagnostic)
             if diagnostic.hints:
                 item.setToolTip("\n".join(diagnostic.hints))
-            color = Qt.GlobalColor.red if diagnostic.severity == "error" else Qt.GlobalColor.darkYellow
-            item.setForeground(color)
+            color = self.theme.error if diagnostic.severity == "error" else self.theme.warning
+            item.setForeground(QColor(color))
             self.diagnostics_list.addItem(item)
         self.diagnostics_list.setVisible(bool(diagnostics))
 
@@ -156,3 +165,12 @@ class GlobalPage(QWidget):
     def reveal_diagnostic(self, diagnostic: Diagnostic) -> None:
         if diagnostic.file == HEADER_FILE_LABEL and diagnostic.line is not None:
             self.header_editor.jump_to(diagnostic.line, diagnostic.column or 1)
+
+    def set_theme(self, theme: Theme) -> None:
+        self.theme = theme
+        self.header_editor.set_theme(theme)
+        self.preview.set_theme(theme)
+        for row in range(self.diagnostics_list.count()):
+            item = self.diagnostics_list.item(row)
+            diagnostic = item.data(DIAGNOSTIC_ROLE)
+            item.setForeground(QColor(theme.error if diagnostic.severity == "error" else theme.warning))

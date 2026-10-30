@@ -1,9 +1,18 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PySide6.QtCore import QTimer, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
-from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QStackedWidget, QTabWidget, QWidget
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QStackedWidget,
+    QTabWidget,
+    QToolButton,
+    QWidget,
+)
 
 from typki.anki.gateway import AnkiConnectTooOldError, AnkiGateway, AnkiUnavailableError
 from typki.card_service import CardService
@@ -18,6 +27,7 @@ from typki.ui.library_watcher import LibraryWatcher
 from typki.ui.save_queue import SaveQueue
 from typki.ui.setup_page import SetupPage
 from typki.ui.shortcuts import SHORTCUT_ACTIONS
+from typki.ui.theme import DEFAULT_THEME, THEMES, Theme, apply_to_application
 
 RECONNECT_INTERVAL_MS = 5000
 SETUP_RECONNECT_INTERVAL_MS = 1500
@@ -26,7 +36,7 @@ NOTICE_TIMEOUT_MS = 4000
 CAPTURE_TAB = 0
 BROWSE_TAB = 1
 GLOBAL_TAB = 2
-INDICATOR_STYLE = "color: palette(placeholder-text); padding: 0 6px;"
+VIEW_ACTION_KEYS = {"show_capture", "show_browse", "show_global", "search", "toggle_phone"}
 
 
 @dataclass(frozen=True)
@@ -46,6 +56,7 @@ def check_anki(gateway: AnkiGateway, service: CardService) -> AnkiStartupState:
 
 class MainWindow(QMainWindow):
     connected = Signal()
+    theme_changed = Signal(str)
 
     def __init__(
         self,
@@ -60,6 +71,7 @@ class MainWindow(QMainWindow):
         shortcuts: dict[str, str],
         startup_problems: list[str],
         show_setup: bool = False,
+        theme: Theme = DEFAULT_THEME,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -80,6 +92,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 820)
 
         self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
         self.tabs.addTab(capture, "Capture")
         self.tabs.addTab(browser, "Browse")
         self.tabs.addTab(global_page, "Global")
@@ -94,7 +107,6 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
         self.indicator = QLabel()
-        self.indicator.setStyleSheet(INDICATOR_STYLE)
         self.statusBar().addPermanentWidget(self.indicator)
         self.statusBar().setSizeGripEnabled(False)
 
@@ -114,6 +126,7 @@ class MainWindow(QMainWindow):
         anki_runner.default_error = self.show_notice_for_error
         render_runner.default_error = self.show_notice_for_error
         self.install_actions(shortcuts)
+        self.apply_theme(theme)
 
         if startup_problems:
             self.show_notice("; ".join(startup_problems))
@@ -131,28 +144,63 @@ class MainWindow(QMainWindow):
             "show_browse": lambda: self.tabs.setCurrentIndex(BROWSE_TAB),
             "show_global": lambda: self.tabs.setCurrentIndex(GLOBAL_TAB),
             "search": self.focus_search,
-            "toggle_dark": self.capture.toggle_dark,
             "toggle_phone": self.capture.toggle_phone,
         }
-        card_menu = self.menuBar().addMenu("&Card")
-        view_menu = self.menuBar().addMenu("&View")
-        view_keys = {"show_capture", "show_browse", "show_global", "search", "toggle_dark", "toggle_phone"}
+        self.menu = QMenu(self)
+        view_actions: list[QAction] = []
         reserved: set[QKeySequence] = set()
         for shortcut_action in SHORTCUT_ACTIONS:
             action = QAction(shortcut_action.label, self)
             sequence = QKeySequence(shortcuts[shortcut_action.key])
             action.setShortcut(sequence)
             action.triggered.connect(handlers[shortcut_action.key])
-            (view_menu if shortcut_action.key in view_keys else card_menu).addAction(action)
+            if shortcut_action.key in VIEW_ACTION_KEYS:
+                view_actions.append(action)
+            else:
+                self.menu.addAction(action)
             self.addAction(action)
             reserved.add(sequence)
         for editor in (self.capture.front_editor, self.capture.back_editor, self.global_page.header_editor):
             editor.reserved_shortcuts = reserved
-        card_menu.addSeparator()
+        self.menu.addSeparator()
+        self.menu.addActions(view_actions)
+        self.menu.addSeparator()
+        self.theme_menu = self.menu.addMenu("Theme")
+        self.theme_actions = QActionGroup(self)
+        for theme in THEMES:
+            theme_action = self.theme_menu.addAction(theme.name)
+            theme_action.setCheckable(True)
+            theme_action.setData(theme.name)
+            self.theme_actions.addAction(theme_action)
+            theme_action.triggered.connect(lambda _checked=False, chosen=theme: self.choose_theme(chosen))
+        self.menu.addSeparator()
         quit_action = QAction("Quit", self)
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
-        card_menu.addAction(quit_action)
+        self.menu.addAction(quit_action)
+        self.addAction(quit_action)
+        self.menu_button = QToolButton()
+        self.menu_button.setText("☰")
+        self.menu_button.setMenu(self.menu)
+        self.menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.tabs.setCornerWidget(self.menu_button, Qt.Corner.TopRightCorner)
+
+    def choose_theme(self, theme: Theme) -> None:
+        self.apply_theme(theme)
+        self.theme_changed.emit(theme.name)
+
+    def apply_theme(self, theme: Theme) -> None:
+        self.theme = theme
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            apply_to_application(app, theme)
+        for theme_action in self.theme_actions.actions():
+            theme_action.setChecked(theme_action.data() == theme.name)
+        self.capture.set_theme(theme)
+        self.global_page.set_theme(theme)
+        self.setup_page.set_theme(theme)
+        if self.browser.results.count():
+            self.browser.refresh()
 
     def on_tab_changed(self, index: int) -> None:
         if self.previous_tab == GLOBAL_TAB and index != GLOBAL_TAB:

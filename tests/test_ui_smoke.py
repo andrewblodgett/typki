@@ -27,6 +27,7 @@ from typki.ui.main_window import MainWindow
 from typki.ui.save_queue import SaveQueue
 from typki.ui.setup_page import INSTALL_STEPS, UPDATE_STEPS
 from typki.ui.shortcuts import SHORTCUT_ACTIONS
+from typki.ui.theme import find_theme
 
 WAIT_MS = 10000
 DEAD_URL = "http://127.0.0.1:9"
@@ -454,3 +455,23 @@ def test_setup_stays_hidden_when_anki_is_already_running(
     assert not main_window.setup_visible
     assert not main_window.offer_setup
     settle(main_window)
+
+
+def test_switching_theme_recolors_without_touching_sources(
+    qtbot: QtBot, window: MainWindow, service: CardService
+) -> None:
+    header = service.library.read_header()
+    window.capture.front_editor.setPlainText("$x$")
+    qtbot.waitUntil(lambda: window.capture.last_render_ok, timeout=WAIT_MS)
+    window.capture.flush()
+    window.tabs.setCurrentIndex(2)
+    emitted: list[str] = []
+    window.theme_changed.connect(emitted.append)
+    nord = find_theme("Nord")
+    window.choose_theme(nord)
+    assert emitted == ["Nord"]
+    assert QApplication.palette().window().color().name() == nord.chrome
+    assert [action.data() for action in window.theme_actions.actions() if action.isChecked()] == ["Nord"]
+    assert not window.global_page.write_pending
+    assert not window.capture.autosave_timer.isActive()
+    assert service.library.read_header() == header

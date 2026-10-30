@@ -20,10 +20,12 @@ from typki.ui.global_page import GlobalPage
 from typki.ui.main_window import MainWindow
 from typki.ui.save_queue import SaveQueue
 from typki.ui.shortcuts import load_shortcuts
+from typki.ui.theme import apply_to_application, find_theme
 
 APP_NAME = "typki"
 LIBRARY_SETTING = "library_path"
 ANKI_SEEN_SETTING = "anki_connected_once"
+THEME_SETTING = "theme"
 DEFAULT_LIBRARY = Path.home() / "typki-library"
 DRAFT_FILENAME = "draft.json"
 OUTBOX_DIRNAME = "outbox"
@@ -55,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
     settings = QSettings()
+    theme = find_theme(settings.value(THEME_SETTING))
+    apply_to_application(app, theme)
 
     library = Library(resolve_library_path(settings, arguments.library))
     try:
@@ -97,7 +101,9 @@ def main(argv: list[str] | None = None) -> int:
             shortcuts,
             shortcut_problems,
             show_setup=not arguments.fake_anki and not settings.value(ANKI_SEEN_SETTING, False, bool),
+            theme=theme,
         )
+        window.theme_changed.connect(lambda name: settings.setValue(THEME_SETTING, name))
         window.connected.connect(lambda: settings.setValue(ANKI_SEEN_SETTING, True))
         capture.restore(draft_store.load())
         window.show()

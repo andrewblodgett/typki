@@ -6,7 +6,6 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import (
     QColor,
     QFont,
-    QFontDatabase,
     QKeyEvent,
     QKeySequence,
     QSyntaxHighlighter,
@@ -19,6 +18,7 @@ from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
 
 from typki.domain.template import PLACEHOLDER_PATTERN, placeholder_spans
 from typki.render.diagnostics import Diagnostic
+from typki.ui.theme import DEFAULT_THEME, Theme, code_font
 
 INDENT = "  "
 MATH_DELIMITER = "$"
@@ -34,36 +34,37 @@ def char_format(color: str | None, bold: bool = False, italic: bool = False) -> 
     return text_format
 
 
-TOKEN_FORMATS: dict[_TokenType, QTextCharFormat] = {
-    Token.Comment: char_format("#8a8a8a", italic=True),
-    Token.Keyword: char_format("#a03fbf", bold=True),
-    Token.Name.Function: char_format("#2b6fd6"),
-    Token.Name.Label: char_format("#c26a00"),
-    Token.Literal.String: char_format("#2e8b3e"),
-    Token.Literal.Number: char_format("#c26a00"),
-    Token.Generic.Heading: char_format("#2b6fd6", bold=True),
-    Token.Generic.Strong: char_format(None, bold=True),
-    Token.Generic.Emph: char_format(None, italic=True),
-}
-MATH_FORMAT = char_format("#0f7f8c")
-MATH_DELIMITER_FORMAT = char_format("#0f7f8c", bold=True)
+TokenFormats = dict[_TokenType, QTextCharFormat]
 
 
-def placeholder_format() -> QTextCharFormat:
+def token_formats_for(theme: Theme) -> TokenFormats:
+    return {
+        Token.Comment: char_format(theme.comment, italic=True),
+        Token.Keyword: char_format(theme.keyword, bold=True),
+        Token.Name.Function: char_format(theme.function),
+        Token.Name.Label: char_format(theme.number),
+        Token.Literal.String: char_format(theme.string),
+        Token.Literal.Number: char_format(theme.number),
+        Token.Generic.Heading: char_format(theme.heading, bold=True),
+        Token.Generic.Strong: char_format(None, bold=True),
+        Token.Generic.Emph: char_format(None, italic=True),
+    }
+
+
+def placeholder_format_for(theme: Theme) -> QTextCharFormat:
     text_format = QTextCharFormat()
-    text_format.setBackground(QColor("#fff1b8"))
-    text_format.setForeground(QColor("#7a5b00"))
+    background = QColor(theme.warning)
+    background.setAlpha(48)
+    text_format.setBackground(background)
+    text_format.setForeground(QColor(theme.warning))
     return text_format
 
 
-PLACEHOLDER_FORMAT = placeholder_format()
-
-
-def format_for_token(token_type: _TokenType) -> QTextCharFormat | None:
+def format_for_token(token_type: _TokenType, token_formats: TokenFormats) -> QTextCharFormat | None:
     current: _TokenType | None = token_type
     while current is not None:
-        if current in TOKEN_FORMATS:
-            return TOKEN_FORMATS[current]
+        if current in token_formats:
+            return token_formats[current]
         current = current.parent
     return None
 
@@ -74,6 +75,15 @@ class TypstHighlighter(QSyntaxHighlighter):
         self.lexer = TypstLexer(stripnl=False, ensurenl=False)
         self.cached_text: str | None = None
         self.cached_spans: list[tuple[int, int, QTextCharFormat]] = []
+        self.set_theme(DEFAULT_THEME)
+
+    def set_theme(self, theme: Theme) -> None:
+        self.token_formats = token_formats_for(theme)
+        self.math_format = char_format(theme.math)
+        self.math_delimiter_format = char_format(theme.math, bold=True)
+        self.placeholder_format = placeholder_format_for(theme)
+        self.cached_text = None
+        self.rehighlight()
 
     def document_spans(self) -> list[tuple[int, int, QTextCharFormat]]:
         text = self.document().toPlainText()
@@ -85,11 +95,11 @@ class TypstHighlighter(QSyntaxHighlighter):
         for token_type, value in self.lexer.get_tokens(text):
             if token_type in Token.Punctuation and value == MATH_DELIMITER:
                 in_math = not in_math
-                spans.append((position, len(value), MATH_DELIMITER_FORMAT))
+                spans.append((position, len(value), self.math_delimiter_format))
             else:
-                token_format = format_for_token(token_type)
+                token_format = format_for_token(token_type, self.token_formats)
                 if token_format is None and in_math and token_type not in Token.Text.Whitespace:
-                    token_format = MATH_FORMAT
+                    token_format = self.math_format
                 if token_format is not None:
                     spans.append((position, len(value), token_format))
             position += len(value)
@@ -107,7 +117,7 @@ class TypstHighlighter(QSyntaxHighlighter):
             clipped_start = max(start, block_start)
             self.setFormat(clipped_start - block_start, min(end, block_end) - clipped_start, token_format)
         for match in PLACEHOLDER_PATTERN.finditer(text):
-            self.setFormat(match.start(), match.end() - match.start(), PLACEHOLDER_FORMAT)
+            self.setFormat(match.start(), match.end() - match.start(), self.placeholder_format)
         prefix = self.document().toPlainText()[:block_end]
         self.setCurrentBlockState(zlib.crc32(prefix.encode()) & 0x3FFFFFFF)
 
@@ -115,13 +125,19 @@ class TypstHighlighter(QSyntaxHighlighter):
 class TypstEditor(QPlainTextEdit):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        font.setPointSizeF(max(font.pointSizeF(), 11.0))
-        self.setFont(font)
+        self.setFont(code_font())
+        self.setFrameShape(QPlainTextEdit.Shape.NoFrame)
         self.setTabChangesFocus(False)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.highlighter = TypstHighlighter(self.document())
         self.reserved_shortcuts: set[QKeySequence] = set()
+        self.theme = DEFAULT_THEME
+
+    def set_theme(self, theme: Theme) -> None:
+        self.theme = theme
+        was_blocked = self.blockSignals(True)
+        self.highlighter.set_theme(theme)
+        self.blockSignals(was_blocked)
 
     def set_source(self, text: str) -> None:
         self.setPlainText(text)
@@ -181,7 +197,7 @@ class TypstEditor(QPlainTextEdit):
             selection = QTextEdit.ExtraSelection()
             selection.cursor = cursor
             selection.format.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
-            color = "#d0342c" if diagnostic.severity == "error" else "#c58b00"
+            color = self.theme.error if diagnostic.severity == "error" else self.theme.warning
             selection.format.setUnderlineColor(QColor(color))
             selection.format.setProperty(QTextFormat.Property.FullWidthSelection, False)
             selections.append(selection)
