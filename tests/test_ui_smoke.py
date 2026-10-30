@@ -20,7 +20,9 @@ from typki.ui.background import TaskRunner
 from typki.ui.browser import BrowserPage
 from typki.ui.capture import CapturePage
 from typki.ui.main_window import MainWindow
+from typki.ui.rerender_dialog import RerenderDialog
 from typki.ui.shortcuts import SHORTCUT_ACTIONS
+from typki.ui.style_page import StylePage
 
 WAIT_MS = 10000
 
@@ -42,8 +44,11 @@ def window(
     draft_store = DraftStore(tmp_path / "state" / "draft.json")
     capture = CapturePage(service, render_runner, anki_runner, draft_store)
     browser = BrowserPage(service, anki_runner)
+    style = StylePage(service, render_runner, anki_runner)
     shortcuts = {action.key: action.default for action in SHORTCUT_ACTIONS}
-    main_window = MainWindow(gateway, service, capture, browser, anki_runner, render_runner, shortcuts, [])
+    main_window = MainWindow(
+        gateway, service, capture, browser, style, anki_runner, render_runner, shortcuts, []
+    )
     qtbot.addWidget(main_window)
     capture.restore(None)
     main_window.show()
@@ -186,3 +191,115 @@ def test_draft_restores_after_restart(
     assert restored_page.front_editor.toPlainText() == "unsaved thought"
     assert restored_page.source_id == capture.source_id
     restored_page.render_runner.wait()
+
+
+def save_cards(qtbot: QtBot, window: MainWindow, deck: str, fronts: list[str]) -> None:
+    capture = window.capture
+    for front in fronts:
+        type_card(window, deck, front, "back")
+        capture.save_and_next()
+        qtbot.waitUntil(lambda: not capture.save_in_flight, timeout=WAIT_MS)
+
+
+def test_style_tab_creates_deck_folder_on_first_edit(
+    qtbot: QtBot, window: MainWindow, service: CardService
+) -> None:
+    window.capture.deck_combo.setCurrentText("Biology")
+    window.tabs.setCurrentIndex(2)
+    style = window.style_page
+    assert style.current_deck == "Biology"
+    assert "default style" in style.ownership_label.text()
+    style.editor_tabs.setCurrentIndex(1)
+    style.deck_macros_editor.setPlainText("#let cell = [the unit of life]\n")
+    macros_path = service.library.root / "decks/biology/macros.typ"
+    qtbot.waitUntil(macros_path.exists, timeout=WAIT_MS)
+    assert macros_path.read_text() == "#let cell = [the unit of life]\n"
+    assert "decks/biology/" in style.ownership_label.text()
+    assert service.library.resolve_deck("Biology").config.folder == "biology"
+
+
+def test_style_settings_form_writes_deck_toml(qtbot: QtBot, window: MainWindow, service: CardService) -> None:
+    window.capture.deck_combo.setCurrentText("Real Analysis")
+    window.tabs.setCurrentIndex(2)
+    style = window.style_page
+    style.width_spin.setValue(70)
+    style.fit_check.setChecked(False)
+    qtbot.waitUntil(
+        lambda: not service.library.resolve_deck("Real Analysis").config.fit_width, timeout=WAIT_MS
+    )
+    config = service.library.resolve_deck("Real Analysis").config
+    assert config.page_width == "70mm"
+    assert config.default_tags == ("real-analysis",)
+
+
+def test_subdeck_inherits_until_given_its_own_style(
+    qtbot: QtBot, window: MainWindow, service: CardService
+) -> None:
+    window.capture.deck_combo.setCurrentText("Real Analysis::Topology")
+    window.tabs.setCurrentIndex(2)
+    style = window.style_page
+    assert "Uses the style of “Real Analysis”" in style.ownership_label.text()
+    assert "defn" in style.deck_macros_editor.toPlainText()
+    style.own_style_button.click()
+    assert service.library.resolve_deck("Real Analysis::Topology").config.folder == "real-analysis-topology"
+    assert "defn" in style.deck_macros_editor.toPlainText()
+
+
+def test_rerender_dialog_updates_stale_cards(
+    qtbot: QtBot,
+    window: MainWindow,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+) -> None:
+    _, fake = fake_ankiconnect
+    save_cards(qtbot, window, "Real Analysis", [f"#defn[Term {index}][meaning]" for index in range(5)])
+    qtbot.waitUntil(lambda: len(fake.notes) == 5, timeout=WAIT_MS)
+    (service.library.root / "decks/real-analysis/macros.typ").write_text(
+        "#let defn(term, body) = [_#term _ #body]\n"
+    )
+    window.open_rerender("Real Analysis")
+    dialog = window.findChild(RerenderDialog)
+    assert dialog is not None
+    qtbot.waitUntil(lambda: dialog.apply_button.isVisible(), timeout=WAIT_MS)
+    assert dialog.apply_button.text() == "Update 5 cards"
+    dialog.apply_button.click()
+    qtbot.waitUntil(lambda: dialog.message.text().startswith("Updated 5 cards"), timeout=WAIT_MS)
+    assert window.rerenderer.staleness("Real Analysis").stale_count == 0
+
+
+def test_rerender_dialog_blocks_broken_macro(
+    qtbot: QtBot,
+    window: MainWindow,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+) -> None:
+    _, fake = fake_ankiconnect
+    save_cards(qtbot, window, "Real Analysis", [f"#defn[Broken {index}][x]" for index in range(3)])
+    qtbot.waitUntil(lambda: len(fake.notes) == 3, timeout=WAIT_MS)
+    before = {note_id: dict(note.fields) for note_id, note in fake.notes.items()}
+    (service.library.root / "decks/real-analysis/macros.typ").write_text("#let defn(term, body) = [#nope]\n")
+    window.open_rerender("Real Analysis")
+    dialog = window.findChild(RerenderDialog)
+    assert dialog is not None
+    qtbot.waitUntil(lambda: dialog.failures.count() == 1, timeout=WAIT_MS)
+    assert "Affects 3 cards" in dialog.failures.item(0).text()
+    assert not dialog.apply_button.isVisible()
+    assert "None of the 3" in dialog.message.text()
+    assert {note_id: note.fields for note_id, note in fake.notes.items()} == before
+    dialog.failures.itemActivated.emit(dialog.failures.item(0))
+    assert window.tabs.currentIndex() == 2
+    assert window.style_page.editor_tabs.currentIndex() == 1
+    assert window.style_page.deck_macros_editor.textCursor().blockNumber() == 0
+
+
+def test_external_macro_edit_reloads_style_tab_and_capture(
+    qtbot: QtBot, window: MainWindow, service: CardService
+) -> None:
+    window.capture.deck_combo.setCurrentText("Real Analysis")
+    window.tabs.setCurrentIndex(2)
+    style = window.style_page
+    window.tabs.setFocus()
+    (service.library.root / "decks/real-analysis/macros.typ").write_text(
+        "#let defn(term, body) = [EXTERNAL]\n"
+    )
+    qtbot.waitUntil(lambda: "EXTERNAL" in style.deck_macros_editor.toPlainText(), timeout=WAIT_MS)

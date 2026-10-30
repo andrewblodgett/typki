@@ -3,20 +3,28 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
-from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox, QTabWidget, QWidget
+from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox, QPushButton, QTabWidget, QWidget
 
 from typki.anki.gateway import AnkiGateway, AnkiUnavailableError
 from typki.anki.note_type import NoteTypeHealth
 from typki.card_service import CardService, NotTypkiNoteError, OpenedCard
+from typki.render.diagnostics import Diagnostic
+from typki.rerender.plan import StalenessReport
+from typki.rerender.runner import Rerenderer
 from typki.ui.background import TaskRunner
 from typki.ui.browser import BrowserPage
 from typki.ui.capture import CapturePage
+from typki.ui.library_watcher import LibraryWatcher
+from typki.ui.rerender_dialog import RerenderDialog
 from typki.ui.shortcuts import SHORTCUT_ACTIONS
+from typki.ui.style_page import StylePage
 
 RECONNECT_INTERVAL_MS = 5000
 STATUS_TIMEOUT_MS = 6000
+GLOBAL_STALENESS_DEBOUNCE_MS = 1500
 CAPTURE_TAB = 0
 BROWSE_TAB = 1
+STYLE_TAB = 2
 
 
 @dataclass(frozen=True)
@@ -45,6 +53,7 @@ class MainWindow(QMainWindow):
         service: CardService,
         capture: CapturePage,
         browser: BrowserPage,
+        style_page: StylePage,
         anki_runner: TaskRunner,
         render_runner: TaskRunner,
         shortcuts: dict[str, str],
@@ -56,6 +65,8 @@ class MainWindow(QMainWindow):
         self.service = service
         self.capture = capture
         self.browser = browser
+        self.style_page = style_page
+        self.rerenderer = Rerenderer(service)
         self.anki_runner = anki_runner
         self.render_runner = render_runner
         anki_runner.setParent(self)
@@ -67,15 +78,29 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.addTab(capture, "Capture")
         self.tabs.addTab(browser, "Browse")
+        self.tabs.addTab(style_page, "Style")
         self.setCentralWidget(self.tabs)
+        self.tabs.currentChanged.connect(self.on_tab_changed)
 
+        self.stale_button = QPushButton()
+        self.stale_button.setFlat(True)
+        self.stale_button.setVisible(False)
+        self.stale_button.setToolTip("Re-render cards whose style or renderer changed")
+        self.stale_button.clicked.connect(lambda: self.open_rerender(None))
         self.connection_label = QLabel("Connecting to Anki…")
+        self.statusBar().addPermanentWidget(self.stale_button)
         self.statusBar().addPermanentWidget(self.connection_label)
         self.statusBar().addPermanentWidget(QLabel(str(service.library.root)))
 
         self.reconnect_timer = QTimer(self, singleShot=True, interval=RECONNECT_INTERVAL_MS)
         self.reconnect_timer.timeout.connect(self.connect_to_anki)
+        self.global_staleness_timer = QTimer(self, singleShot=True, interval=GLOBAL_STALENESS_DEBOUNCE_MS)
+        self.global_staleness_timer.timeout.connect(self.refresh_global_staleness)
 
+        self.watcher = LibraryWatcher(service.library, self)
+        self.watcher.changed.connect(self.on_library_changed)
+        style_page.status_message.connect(self.show_status)
+        style_page.rerender_requested.connect(self.open_rerender)
         capture.status_message.connect(self.show_status)
         browser.status_message.connect(self.show_status)
         browser.open_requested.connect(self.open_note)
@@ -98,13 +123,14 @@ class MainWindow(QMainWindow):
             "focus_tags": lambda: self.focus_capture_widget(self.capture.tags_edit),
             "show_capture": self.show_capture,
             "show_browse": lambda: self.tabs.setCurrentIndex(BROWSE_TAB),
+            "show_style": lambda: self.tabs.setCurrentIndex(STYLE_TAB),
             "search": self.focus_search,
             "toggle_dark": self.capture.toggle_dark,
             "toggle_phone": self.capture.toggle_phone,
         }
         card_menu = self.menuBar().addMenu("&Card")
         view_menu = self.menuBar().addMenu("&View")
-        view_keys = {"show_capture", "show_browse", "search", "toggle_dark", "toggle_phone"}
+        view_keys = {"show_capture", "show_browse", "show_style", "search", "toggle_dark", "toggle_phone"}
         reserved: set[QKeySequence] = set()
         for shortcut_action in SHORTCUT_ACTIONS:
             action = QAction(shortcut_action.label, self)
@@ -114,13 +140,67 @@ class MainWindow(QMainWindow):
             (view_menu if shortcut_action.key in view_keys else card_menu).addAction(action)
             self.addAction(action)
             reserved.add(sequence)
-        for editor in (self.capture.front_editor, self.capture.back_editor):
+        editors = (
+            self.capture.front_editor,
+            self.capture.back_editor,
+            self.style_page.deck_macros_editor,
+            self.style_page.deck_style_editor,
+            self.style_page.global_macros_editor,
+        )
+        for editor in editors:
             editor.reserved_shortcuts = reserved
         card_menu.addSeparator()
         quit_action = QAction("Quit", self)
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
         card_menu.addAction(quit_action)
+
+    def on_tab_changed(self, index: int) -> None:
+        if index == STYLE_TAB:
+            self.style_page.show_deck(self.capture.deck_name())
+
+    def on_library_changed(self) -> None:
+        self.capture.request_render()
+        self.style_page.on_library_changed()
+        self.global_staleness_timer.start()
+
+    def refresh_global_staleness(self) -> None:
+        if not self.anki_connected:
+            return
+        self.anki_runner.run(
+            lambda: self.rerenderer.staleness(None),
+            self.on_global_staleness,
+            lambda _error: self.stale_button.setVisible(False),
+        )
+
+    def on_global_staleness(self, report: StalenessReport) -> None:
+        count = report.stale_count
+        self.stale_button.setText(f"{count} stale card{'s' if count != 1 else ''} · re-render")
+        self.stale_button.setVisible(count > 0)
+
+    def open_rerender(self, root_deck: str | None) -> None:
+        self.style_page.flush_writes()
+        dialog = RerenderDialog(self.rerenderer, self.anki_runner, root_deck, self)
+        dialog.open_requested.connect(lambda note_id: self.open_from_dialog(dialog, note_id))
+        dialog.diagnostic_requested.connect(
+            lambda deck_name, diagnostic: self.reveal_from_dialog(dialog, deck_name, diagnostic)
+        )
+        dialog.finished_updating.connect(self.after_rerender)
+        dialog.open()
+
+    def open_from_dialog(self, dialog: RerenderDialog, note_id: int) -> None:
+        dialog.accept()
+        self.open_note(note_id)
+
+    def reveal_from_dialog(self, dialog: RerenderDialog, deck_name: str, diagnostic: Diagnostic) -> None:
+        dialog.accept()
+        self.tabs.setCurrentIndex(STYLE_TAB)
+        self.style_page.show_deck(deck_name)
+        self.style_page.reveal_diagnostic(diagnostic)
+
+    def after_rerender(self) -> None:
+        self.style_page.refresh_staleness()
+        self.refresh_global_staleness()
 
     def show_capture(self) -> None:
         self.tabs.setCurrentIndex(CAPTURE_TAB)
@@ -155,6 +235,10 @@ class MainWindow(QMainWindow):
         self.anki_connected = True
         self.connection_label.setText(f"Anki connected (AnkiConnect v{state.version})")
         self.capture.set_deck_names(state.deck_names)
+        self.style_page.set_deck_names(state.deck_names)
+        self.refresh_global_staleness()
+        if self.tabs.currentIndex() == STYLE_TAB:
+            self.style_page.refresh_staleness()
         if state.created_note_type:
             self.show_status("Created the 'Typki Card' note type in Anki.")
         if not state.health.healthy:
@@ -220,6 +304,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.capture.save_draft()
+        self.style_page.flush_writes()
         self.anki_runner.wait()
         self.render_runner.wait()
         super().closeEvent(event)

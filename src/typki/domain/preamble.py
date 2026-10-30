@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from typki.domain.deck import DeckConfig
 
-PREAMBLE_FORMAT_VERSION = 1
+PREAMBLE_FORMAT_VERSION = 2
 PAGE_MARGIN = "5mm"
 DEFAULT_FONTS = ("Libertinus Serif", "New Computer Modern")
 DEFAULT_TEXT_SIZE = "11pt"
@@ -35,12 +35,24 @@ class Preamble:
         return self.header + card_source
 
 
+def fit_width_rule(max_width: str) -> list[str]:
+    return [
+        "#show: body => context {",
+        "  let natural-width = measure(body).width",
+        f"  block(width: calc.min(natural-width, {max_width}), body)",
+        "}",
+    ]
+
+
 def build_preamble_header(config: DeckConfig, files: PreambleFiles) -> str:
     font_list = ", ".join(f'"{font}"' for font in DEFAULT_FONTS)
+    page_width = "auto" if config.fit_width else config.page_width
     lines = [
-        f"#set page(width: {config.page_width}, height: auto, margin: {PAGE_MARGIN}, fill: none)",
+        f"#set page(width: {page_width}, height: auto, margin: {PAGE_MARGIN}, fill: none)",
         f"#set text(font: ({font_list}), size: {DEFAULT_TEXT_SIZE})",
     ]
+    if config.fit_width:
+        lines.extend(fit_width_rule(config.page_width))
     if files.global_macros:
         lines.append(f'#import "{files.global_macros}": *')
     if files.deck_macros:
@@ -68,15 +80,35 @@ def compute_preamble_hash(
     return digest.hexdigest()[:16]
 
 
+def canonical_files(files: PreambleFiles) -> PreambleFiles:
+    return PreambleFiles(
+        global_macros="global-macros" if files.global_macros else None,
+        deck_macros="deck-macros" if files.deck_macros else None,
+        deck_style="deck-style" if files.deck_style else None,
+    )
+
+
+def contents_by_role(files: PreambleFiles, file_contents: Mapping[str, bytes]) -> dict[str, bytes]:
+    roles = canonical_files(files)
+    pairs = (
+        (roles.global_macros, files.global_macros),
+        (roles.deck_macros, files.deck_macros),
+        (roles.deck_style, files.deck_style),
+    )
+    return {role: file_contents.get(path, b"") for role, path in pairs if role and path}
+
+
 def build_preamble(
     config: DeckConfig,
     files: PreambleFiles,
     file_contents: Mapping[str, bytes],
     font_fingerprint: str,
 ) -> Preamble:
-    header = build_preamble_header(config, files)
+    canonical_header = build_preamble_header(config, canonical_files(files))
     return Preamble(
-        header=header,
-        hash=compute_preamble_hash(header, config.scale, file_contents, font_fingerprint),
+        header=build_preamble_header(config, files),
+        hash=compute_preamble_hash(
+            canonical_header, config.scale, contents_by_role(files, file_contents), font_fingerprint
+        ),
         scale=config.scale,
     )

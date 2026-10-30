@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typki.anki import note_type
 from typki.anki.gateway import AnkiError, AnkiGateway, NewNote, NoteRecord
 from typki.anki.note_type import NOTE_TYPE_NAME, NoteTypeHealth, diagnose_note_type
+from typki.anki.search import quoted_term
 from typki.domain.card import CardDraft, StoredCard
 from typki.domain.staleness import is_stale
 from typki.library.store import Library, ResolvedDeck
@@ -63,7 +64,7 @@ class SearchResult:
 
 
 def note_type_query() -> str:
-    return f'"note:{NOTE_TYPE_NAME}"'
+    return quoted_term("note", NOTE_TYPE_NAME)
 
 
 def to_stored_card(record: NoteRecord) -> StoredCard:
@@ -179,7 +180,9 @@ class CardService:
         }
 
     def find_by_source_id(self, source_id: str) -> int | None:
-        matches = self.gateway.find_notes(f'{note_type_query()} "{note_type.SOURCE_ID}:{source_id}"')
+        matches = self.gateway.find_notes(
+            f"{note_type_query()} {quoted_term(note_type.SOURCE_ID, source_id)}"
+        )
         return matches[0] if matches else None
 
     def update_existing(self, note_id: int, draft: CardDraft, fields: dict[str, str]) -> None:

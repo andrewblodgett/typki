@@ -22,6 +22,7 @@ from typki.ui.background import TaskRunner
 
 THUMBNAIL_WIDTH = 280
 THUMBNAIL_MAX_HEIGHT = 120
+THUMBNAIL_PIXELS_PER_POINT = 1.1
 NOTE_ID_ROLE = Qt.ItemDataRole.UserRole
 STALE_MARKER = "● stale"
 
@@ -41,10 +42,10 @@ def render_thumbnail(svg_text: str, color: str) -> QImage:
     size = renderer.defaultSize()
     if size.width() <= 0:
         return image
-    height = THUMBNAIL_WIDTH * size.height() / size.width()
+    scale = min(THUMBNAIL_PIXELS_PER_POINT, THUMBNAIL_WIDTH / size.width())
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    renderer.render(painter, QRectF(0, 0, THUMBNAIL_WIDTH, height))
+    renderer.render(painter, QRectF(0, 0, size.width() * scale, size.height() * scale))
     painter.end()
     return image
 

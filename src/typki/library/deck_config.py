@@ -1,7 +1,11 @@
+import json
+import re
 import tomllib
+from collections.abc import Mapping
 from pathlib import Path
 
 from typki.domain.deck import (
+    DEFAULT_FIT_WIDTH,
     DEFAULT_PAGE_WIDTH,
     DEFAULT_SCALE,
     DEFAULT_TEMPLATE,
@@ -26,6 +30,9 @@ def parse_deck_config(text: str, folder: str, source_label: str) -> DeckConfig:
     scale = data.get("scale", DEFAULT_SCALE)
     if not isinstance(scale, (int, float)) or scale <= 0:
         raise DeckConfigError(f"{source_label}: scale must be a positive number")
+    fit_width = data.get("fit_width", DEFAULT_FIT_WIDTH)
+    if not isinstance(fit_width, bool):
+        raise DeckConfigError(f"{source_label}: fit_width must be true or false")
     tags = data.get("default_tags", [])
     if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
         raise DeckConfigError(f"{source_label}: default_tags must be a list of strings")
@@ -35,6 +42,7 @@ def parse_deck_config(text: str, folder: str, source_label: str) -> DeckConfig:
         scale=float(scale),
         default_template=str(data.get("default_template", DEFAULT_TEMPLATE)),
         default_tags=tuple(tags),
+        fit_width=fit_width,
         folder=folder,
     )
 
@@ -61,3 +69,39 @@ def load_deck_configs(decks_dir: Path) -> tuple[dict[str, DeckConfig], list[str]
             continue
         configs[config.anki_deck] = config
     return configs, problems
+
+
+TomlValue = str | float | bool | list[str]
+
+
+def toml_value(value: TomlValue) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return f"{value:g}" if "." in f"{value:g}" else f"{value:g}.0"
+    if isinstance(value, list):
+        return "[" + ", ".join(json.dumps(item, ensure_ascii=False) for item in value) + "]"
+    return json.dumps(value, ensure_ascii=False)
+
+
+def update_toml_keys(text: str, updates: Mapping[str, TomlValue]) -> str:
+    lines = text.splitlines()
+    remaining = dict(updates)
+    for index, line in enumerate(lines):
+        match = re.match(r"^\s*([A-Za-z0-9_-]+)\s*=", line)
+        if match and match.group(1) in remaining:
+            key = match.group(1)
+            lines[index] = f"{key} = {toml_value(remaining.pop(key))}"
+    lines.extend(f"{key} = {toml_value(value)}" for key, value in remaining.items())
+    return "\n".join(lines) + "\n"
+
+
+def deck_config_values(config: DeckConfig) -> dict[str, TomlValue]:
+    return {
+        "anki_deck": config.anki_deck,
+        "page_width": config.page_width,
+        "fit_width": config.fit_width,
+        "scale": float(config.scale),
+        "default_template": config.default_template,
+        "default_tags": list(config.default_tags),
+    }

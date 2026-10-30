@@ -33,6 +33,11 @@ def test_plain_text_strips_markup_and_code() -> None:
     assert plain_text_from_source(source) == "Define term x in RR Term body"
 
 
+def test_plain_text_keeps_math_operators_and_drops_line_markers() -> None:
+    source = "= Heading\n+ first item\n- second\n$x^2 >= 0$ and $a + b = c$"
+    assert plain_text_from_source(source) == "Heading first item second x 2 >= 0 and a + b = c"
+
+
 def test_plain_text_falls_back_to_source_when_only_code() -> None:
     assert plain_text_from_source("#line(length: 1cm)") != ""
 
@@ -79,8 +84,12 @@ def test_picks_up_macro_changes_with_same_compiler(library: Library, renderer: R
 def test_page_width_from_deck_config(tmp_path: Path) -> None:
     library = Library(tmp_path)
     library.ensure_layout()
-    narrow = build_preamble(DeckConfig("D", page_width="50mm", scale=1.0), PreambleFiles(), {}, "")
-    wide = build_preamble(DeckConfig("D", page_width="100mm", scale=1.0), PreambleFiles(), {}, "")
+    narrow = build_preamble(
+        DeckConfig("D", page_width="50mm", scale=1.0, fit_width=False), PreambleFiles(), {}, ""
+    )
+    wide = build_preamble(
+        DeckConfig("D", page_width="100mm", scale=1.0, fit_width=False), PreambleFiles(), {}, ""
+    )
     renderer = Renderer(library.root, [])
     width_pattern = re.compile(r'width="([\d.]+)pt"')
 
@@ -98,3 +107,22 @@ def test_parse_diagnostics_without_location_uses_fallback(tmp_path: Path) -> Non
     diagnostics = parse_diagnostics("", "something failed", "error", 4, tmp_path)
     assert diagnostics[0].message == "something failed"
     assert diagnostics[0].line is None
+
+
+def test_fit_width_shrinks_short_cards_and_wraps_long_ones(tmp_path: Path) -> None:
+    library = Library(tmp_path)
+    library.ensure_layout()
+    renderer = Renderer(library.root, [])
+    preamble = build_preamble(DeckConfig("D", page_width="80mm", scale=1.0), PreambleFiles(), {}, "")
+    width_pattern = re.compile(r'width="([\d.]+)pt"')
+
+    def width_of(source: str) -> float:
+        svg = renderer.render_side(source, preamble).svg
+        assert svg is not None
+        match = width_pattern.search(svg)
+        assert match is not None
+        return float(match.group(1))
+
+    full_width_pt = (80 + 2 * 5) * 72 / 25.4
+    assert width_of("Short.") < full_width_pt / 3
+    assert abs(width_of("word " * 80) - full_width_pt) < 1

@@ -23,6 +23,7 @@ SHORTCUT_ACTIONS: tuple[ShortcutAction, ...] = (
     ShortcutAction("focus_tags", "Edit tags", "Ctrl+G"),
     ShortcutAction("show_capture", "Show capture", "Ctrl+1"),
     ShortcutAction("show_browse", "Show browser", "Ctrl+2"),
+    ShortcutAction("show_style", "Show deck style", "Ctrl+3"),
     ShortcutAction("search", "Search cards", "Ctrl+F"),
     ShortcutAction("toggle_dark", "Toggle dark preview", "Ctrl+Shift+D"),
     ShortcutAction("toggle_phone", "Toggle phone-width preview", "Ctrl+Shift+P"),

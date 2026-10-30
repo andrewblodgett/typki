@@ -114,6 +114,26 @@ class AnkiConnectGateway:
     def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
         self.invoke("updateNoteFields", note={"id": note_id, "fields": fields})
 
+    def update_many_note_fields(self, updates: list[tuple[int, dict[str, str]]]) -> list[str | None]:
+        if not updates:
+            return []
+        actions = [
+            {
+                "action": "updateNoteFields",
+                "version": API_VERSION,
+                "params": {"note": {"id": note_id, "fields": fields}},
+            }
+            for note_id, fields in updates
+        ]
+        results = self.invoke("multi", actions=actions)
+        errors: list[str | None] = []
+        for result in results:
+            if isinstance(result, dict) and result.get("error") is not None:
+                errors.append(str(result["error"]))
+            else:
+                errors.append(None)
+        return errors
+
     def update_note_tags(self, note_id: int, tags: tuple[str, ...]) -> None:
         self.invoke("updateNoteTags", note=note_id, tags=list(tags))
 

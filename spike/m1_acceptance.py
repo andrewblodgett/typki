@@ -19,6 +19,7 @@ from typki.ui.browser import BrowserPage
 from typki.ui.capture import CapturePage
 from typki.ui.main_window import MainWindow
 from typki.ui.shortcuts import SHORTCUT_ACTIONS
+from typki.ui.style_page import StylePage
 
 DECK = "Typki M1 Test"
 WORK_DIR = Path(sys.argv[1])
@@ -50,8 +51,9 @@ def build_window(gateway, library):
     draft_store = DraftStore(WORK_DIR / "draft.json")
     capture = CapturePage(service, render_runner, anki_runner, draft_store)
     browser = BrowserPage(service, anki_runner)
+    style = StylePage(service, render_runner, anki_runner)
     shortcuts = {action.key: action.default for action in SHORTCUT_ACTIONS}
-    window = MainWindow(gateway, service, capture, browser, anki_runner, render_runner, shortcuts, [])
+    window = MainWindow(gateway, service, capture, browser, style, anki_runner, render_runner, shortcuts, [])
     window.resize(1400, 860)
     capture.status_message.connect(lambda message: print('status:', message) if 'Not saved' in message else None)
     capture.restore(draft_store.load())

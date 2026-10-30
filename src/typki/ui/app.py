@@ -17,6 +17,7 @@ from typki.ui.browser import BrowserPage
 from typki.ui.capture import CapturePage
 from typki.ui.main_window import MainWindow
 from typki.ui.shortcuts import load_shortcuts
+from typki.ui.style_page import StylePage
 
 APP_NAME = "typki"
 LIBRARY_SETTING = "library_path"
@@ -78,11 +79,13 @@ def main(argv: list[str] | None = None) -> int:
 
         capture = CapturePage(service, render_runner, anki_runner, draft_store)
         browser = BrowserPage(service, anki_runner)
+        style = StylePage(service, render_runner, anki_runner)
         window = MainWindow(
             gateway,
             service,
             capture,
             browser,
+            style,
             anki_runner,
             render_runner,
             shortcuts,

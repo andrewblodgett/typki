@@ -10,7 +10,7 @@ from typki.render.diagnostics import Diagnostic, parse_diagnostics
 from typki.render.plain_text import plain_text_from_source
 from typki.render.svg_postprocess import postprocess_svg
 
-RENDER_PIPELINE_VERSION = 1
+RENDER_PIPELINE_VERSION = 2
 
 
 @dataclass(frozen=True)

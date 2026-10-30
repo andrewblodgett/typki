@@ -199,12 +199,14 @@ class FakeAnki:
         ]
 
     def action_multi(self, actions: list[dict[str, Any]]) -> list[Any]:
-        results = []
+        results: list[Any] = []
         for entry in actions:
             try:
-                results.append(self.handle(entry["action"], entry.get("params", {})))
+                result = self.handle(entry["action"], entry.get("params", {}))
             except ValueError as error:
                 results.append({"result": None, "error": str(error)})
+                continue
+            results.append({"result": result, "error": None} if "version" in entry else result)
         return results
 
     def matches_term(self, note: FakeNote, term: str) -> bool:
@@ -218,14 +220,16 @@ class FakeAnki:
         if lowered_key == "note":
             return note.model_name == value
         if lowered_key == "deck":
-            return note.deck_name == value or note.deck_name.startswith(value + "::")
+            return any(
+                search_pattern_matches(value, candidate) for candidate in deck_and_ancestors(note.deck_name)
+            )
         if lowered_key == "tag":
             return value in note.tags
         if lowered_key == "nid":
             return str(note.note_id) in value.split(",")
         for name, text in note.fields.items():
             if name.lower() == lowered_key:
-                return text == value
+                return search_pattern_matches(value, text)
         return False
 
     def require_model(self, name: str) -> FakeModel:
@@ -237,6 +241,30 @@ class FakeAnki:
         if note_id not in self.notes:
             raise ValueError(f"note was not found: {note_id}")
         return self.notes[note_id]
+
+
+def deck_and_ancestors(deck_name: str) -> list[str]:
+    parts = deck_name.split("::")
+    return ["::".join(parts[:length]) for length in range(len(parts), 0, -1)]
+
+
+def search_pattern_matches(pattern: str, text: str) -> bool:
+    regex = ""
+    index = 0
+    while index < len(pattern):
+        character = pattern[index]
+        if character == "\\" and index + 1 < len(pattern):
+            regex += re.escape(pattern[index + 1])
+            index += 2
+            continue
+        if character == "*":
+            regex += ".*"
+        elif character == "_":
+            regex += "."
+        else:
+            regex += re.escape(character)
+        index += 1
+    return re.fullmatch(regex, text, flags=re.IGNORECASE | re.DOTALL) is not None
 
 
 def make_handler(fake: FakeAnki) -> type[BaseHTTPRequestHandler]:

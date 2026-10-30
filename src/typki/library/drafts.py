@@ -1,10 +1,9 @@
 import json
-import os
-import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
 from typki.domain.card import CardDraft
+from typki.library.store import write_text_atomically
 
 
 class DraftStore:
@@ -12,14 +11,7 @@ class DraftStore:
         self.path = path
 
     def save(self, draft: CardDraft) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(asdict(draft), ensure_ascii=False, indent=2)
-        descriptor, temporary_name = tempfile.mkstemp(dir=self.path.parent, prefix=".draft-")
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, self.path)
+        write_text_atomically(self.path, json.dumps(asdict(draft), ensure_ascii=False, indent=2))
 
     def load(self) -> CardDraft | None:
         try:
