@@ -53,6 +53,8 @@ class AnkiConnectGateway:
                     return body
             except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
                 last_error = error
+                if not was_never_sent(error):
+                    break
         raise AnkiUnavailableError(f"AnkiConnect is not reachable at {self.url}: {last_error}")
 
     def version(self) -> int:
@@ -167,6 +169,11 @@ class AnkiConnectGateway:
 
     def delete_notes(self, note_ids: list[int]) -> None:
         self.invoke("deleteNotes", notes=note_ids)
+
+
+def was_never_sent(error: Exception) -> bool:
+    reason = error.reason if isinstance(error, urllib.error.URLError) else error
+    return isinstance(reason, ConnectionRefusedError)
 
 
 def to_note_record(raw_note: dict[str, Any], deck_by_card: dict[int, str]) -> NoteRecord:

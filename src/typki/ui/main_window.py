@@ -348,6 +348,7 @@ class MainWindow(QMainWindow):
                 break
             self.anki_runner.wait(100)
             QApplication.processEvents()
+        self.save_queue.persist_unsent()
         self.anki_runner.wait()
         self.render_runner.wait()
         super().closeEvent(event)

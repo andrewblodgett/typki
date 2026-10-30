@@ -7,7 +7,7 @@ from typki.anki.fake_anki import FakeAnki
 from typki.anki.search import escape_search_text
 from typki.card_service import CardService
 from typki.domain.card import CardDraft
-from typki.rerender.runner import Rerenderer, RerenderProgress, group_failures
+from typki.rerender.runner import Rerenderer, RerenderProgress
 
 DECK = "Real Analysis"
 
@@ -51,7 +51,7 @@ def test_header_change_marks_all_decks_stale_and_rerender_updates_all(
     assert len(fake.notes) == 50
 
 
-def test_broken_header_is_reported_once_and_nothing_overwritten(
+def test_broken_header_blames_header_and_overwrites_nothing(
     service: CardService, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
 ) -> None:
     _, fake = fake_ankiconnect
@@ -62,10 +62,10 @@ def test_broken_header_is_reported_once_and_nothing_overwritten(
     staleness = rerenderer.staleness()
     dry_run = rerenderer.run(staleness.stale_note_ids, apply=False)
     assert len(dry_run.failures) == 50
-    groups = group_failures(dry_run.failures)
-    assert len(groups) == 1
-    assert groups[0].diagnostic is not None and groups[0].diagnostic.file == "header.typ"
-    assert len(groups[0].failures) == 50
+    assert all(
+        any(diagnostic.file == "header.typ" for diagnostic in failure.diagnostics)
+        for failure in dry_run.failures
+    )
     applied = rerenderer.run(staleness.stale_note_ids, apply=True)
     assert not applied.updated
     assert {note_id: note.fields for note_id, note in fake.notes.items()} == before

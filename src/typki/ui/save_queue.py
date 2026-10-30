@@ -24,18 +24,22 @@ class SaveQueue(QObject):
         self.runner = runner
         self.outbox = outbox
         self.pending: list[CardDraft] = []
-        self.busy = False
-        self.in_flight_source = ""
+        self.in_flight: CardDraft | None = None
         self.offline = False
         self.status_by_source: dict[str, str] = {}
 
     @property
     def idle(self) -> bool:
-        return not self.busy and not self.pending
+        return self.in_flight is None and not self.pending
 
     def is_saving(self, source_id: str) -> bool:
-        in_flight = self.busy and self.in_flight_source == source_id
+        in_flight = self.in_flight is not None and self.in_flight.source_id == source_id
         return in_flight or any(draft.source_id == source_id for draft in self.pending)
+
+    def persist_unsent(self) -> None:
+        unsent = [self.in_flight, *self.pending] if self.in_flight is not None else self.pending
+        for draft in unsent:
+            self.outbox.put(draft)
 
     def enqueue(self, draft: CardDraft) -> None:
         if self.offline:
@@ -56,11 +60,10 @@ class SaveQueue(QObject):
         self.process()
 
     def process(self) -> None:
-        if self.busy or not self.pending:
+        if self.in_flight is not None or not self.pending:
             return
         draft = self.pending.pop(0)
-        self.busy = True
-        self.in_flight_source = draft.source_id
+        self.in_flight = draft
         self.runner.run(
             lambda: self.service.save(draft),
             lambda result: self.on_saved(draft, result),
@@ -68,7 +71,7 @@ class SaveQueue(QObject):
         )
 
     def on_saved(self, draft: CardDraft, result: SaveResult) -> None:
-        self.busy = False
+        self.in_flight = None
         self.outbox.remove(draft.source_id)
         self.status_by_source[draft.source_id] = SAVED
         self.saved.emit(draft.source_id, result)
@@ -76,7 +79,7 @@ class SaveQueue(QObject):
         self.process()
 
     def on_failed(self, draft: CardDraft, error: Exception) -> None:
-        self.busy = False
+        self.in_flight = None
         if isinstance(error, AnkiUnavailableError):
             self.offline = True
             for queued in [draft, *self.pending]:

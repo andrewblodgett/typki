@@ -1,7 +1,9 @@
+import urllib.error
+
 import pytest
 
 from typki.anki import note_type
-from typki.anki.ankiconnect import AnkiConnectGateway
+from typki.anki.ankiconnect import AnkiConnectGateway, was_never_sent
 from typki.anki.fake_anki import FakeAnki
 from typki.anki.gateway import AnkiError, DuplicateNoteError, NotAnkiConnectError
 from typki.card_service import CardService, NotTypkiNoteError, RenderFailedError
@@ -187,3 +189,11 @@ def test_other_servers_are_not_mistaken_for_ankiconnect(monkeypatch: pytest.Monk
     monkeypatch.setattr(gateway, "_send_with_retries", lambda request: b"{}")
     with pytest.raises(NotAnkiConnectError):
         gateway.version()
+
+
+def test_only_refused_connections_are_retried() -> None:
+    assert was_never_sent(urllib.error.URLError(ConnectionRefusedError()))
+    assert was_never_sent(ConnectionRefusedError())
+    assert not was_never_sent(urllib.error.URLError(TimeoutError()))
+    assert not was_never_sent(TimeoutError())
+    assert not was_never_sent(ConnectionResetError())

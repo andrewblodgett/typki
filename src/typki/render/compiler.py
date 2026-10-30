@@ -24,10 +24,6 @@ class SideRender:
         return self.svg is not None
 
     @property
-    def byte_size(self) -> int:
-        return len(self.svg.encode()) if self.svg else 0
-
-    @property
     def errors(self) -> tuple[Diagnostic, ...]:
         return tuple(d for d in self.diagnostics if d.severity == "error")
 
@@ -44,26 +40,36 @@ class Renderer:
         package_cache: Path | None = None,
     ) -> None:
         self.library_root = library_root
+        self.font_dirs = font_dirs
+        self.package_cache = package_cache
         self.renderer_version = current_renderer_version()
         self._lock = threading.Lock()
-        fonts = typst.Fonts(
-            include_system_fonts=False,
-            include_embedded_fonts=True,
-            font_paths=[str(path) for path in font_dirs if path.is_dir()],
-        )
-        self._compiler = typst.Compiler(
-            root=str(library_root),
-            font_paths=fonts,
-            ignore_system_fonts=True,
-            package_cache_path=str(package_cache) if package_cache else None,
-        )
+        self._compiler: typst.Compiler | None = None
+        self._compiler_fonts: str | None = None
+
+    def compiler_for(self, font_fingerprint: str) -> typst.Compiler:
+        if self._compiler is None or font_fingerprint != self._compiler_fonts:
+            fonts = typst.Fonts(
+                include_system_fonts=False,
+                include_embedded_fonts=True,
+                font_paths=[str(path) for path in self.font_dirs if path.is_dir()],
+            )
+            self._compiler = typst.Compiler(
+                root=str(self.library_root),
+                font_paths=fonts,
+                ignore_system_fonts=True,
+                package_cache_path=str(self.package_cache) if self.package_cache else None,
+            )
+            self._compiler_fonts = font_fingerprint
+        return self._compiler
 
     def render_side(self, source: str, preamble: Preamble) -> SideRender:
         plain_text = plain_text_from_source(source)
         main_source = preamble.wrap(source).encode()
         try:
             with self._lock:
-                output, warnings = self._compiler.compile_with_warnings(input=main_source, format="svg")
+                compiler = self.compiler_for(preamble.font_fingerprint)
+                output, warnings = compiler.compile_with_warnings(input=main_source, format="svg")
         except typst.TypstError as error:
             diagnostics = parse_diagnostics(
                 error.diagnostic or "",

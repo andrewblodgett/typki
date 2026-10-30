@@ -1,6 +1,7 @@
 import hashlib
 import os
 import tempfile
+import threading
 from pathlib import Path
 
 from typki.domain.preamble import DEFAULT_HEADER, HEADER_FILENAME, Preamble, build_preamble
@@ -21,6 +22,9 @@ def write_text_atomically(path: Path, text: str) -> None:
 class Library:
     def __init__(self, root: Path) -> None:
         self.root = root
+        self.font_lock = threading.Lock()
+        self.font_signature: tuple[tuple[str, int, int], ...] | None = None
+        self.cached_font_fingerprint = ""
 
     @property
     def fonts_dir(self) -> Path:
@@ -47,14 +51,34 @@ class Library:
     def preamble(self) -> Preamble:
         return build_preamble(self.read_header(), self.font_fingerprint())
 
+    def font_files(self) -> list[Path]:
+        if not self.fonts_dir.is_dir():
+            return []
+        return sorted(
+            path
+            for path in self.fonts_dir.rglob("*")
+            if path.suffix.lower() in FONT_SUFFIXES and path.is_file()
+        )
+
     def font_fingerprint(self) -> str:
         if not self.fonts_dir.is_dir():
             return ""
+        stats = [(path, path.stat()) for path in self.font_files()]
+        signature = tuple(
+            (path.relative_to(self.fonts_dir).as_posix(), stat.st_size, stat.st_mtime_ns)
+            for path, stat in stats
+        )
+        with self.font_lock:
+            if signature != self.font_signature:
+                self.font_signature = signature
+                self.cached_font_fingerprint = self.hash_fonts([path for path, _stat in stats])
+            return self.cached_font_fingerprint
+
+    def hash_fonts(self, font_paths: list[Path]) -> str:
         digest = hashlib.sha256()
-        for font_path in sorted(self.fonts_dir.rglob("*")):
-            if font_path.suffix.lower() in FONT_SUFFIXES and font_path.is_file():
-                digest.update(font_path.relative_to(self.fonts_dir).as_posix().encode())
-                digest.update(hashlib.sha256(font_path.read_bytes()).digest())
+        for font_path in font_paths:
+            digest.update(font_path.relative_to(self.fonts_dir).as_posix().encode())
+            digest.update(hashlib.sha256(font_path.read_bytes()).digest())
         return digest.hexdigest()[:16]
 
     def watched_paths(self) -> list[Path]:

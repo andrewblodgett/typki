@@ -83,11 +83,12 @@ def insert_newline(text: str, start: int, end: int) -> Edit:
     indent = leading_whitespace(current_line)
     previous = text[start - 1] if start > 0 else ""
     following = text[end] if end < len(text) else ""
-    if previous in "([{" and previous and following == PAIRS[previous]:
+    opens_block = previous != "" and previous in "([{"
+    if opens_block and following == PAIRS[previous]:
         inner = "\n" + indent + INDENT
         replacement = inner + "\n" + indent
         return Edit(start, end, replacement, start + len(inner), start + len(inner))
-    if previous and previous in "([{":
+    if opens_block:
         indent += INDENT
     replacement = "\n" + indent
     return Edit(start, end, replacement, start + len(replacement), start + len(replacement))

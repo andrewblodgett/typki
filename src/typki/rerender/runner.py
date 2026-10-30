@@ -30,42 +30,10 @@ class RerenderProgress:
 
 @dataclass
 class RerenderReport:
-    applied: bool
-    checked: int = 0
     compiled: list[int] = field(default_factory=list)
     updated: list[int] = field(default_factory=list)
     failures: list[RerenderFailure] = field(default_factory=list)
     cancelled: bool = False
-
-
-@dataclass(frozen=True)
-class FailureGroup:
-    diagnostic: Diagnostic | None
-    failures: tuple[RerenderFailure, ...]
-
-    @property
-    def shared(self) -> bool:
-        return self.diagnostic is not None
-
-
-def shared_library_diagnostic(failure: RerenderFailure) -> Diagnostic | None:
-    return next((diagnostic for diagnostic in failure.diagnostics if diagnostic.file), None)
-
-
-def group_failures(failures: list[RerenderFailure]) -> list[FailureGroup]:
-    shared: dict[str, list[RerenderFailure]] = {}
-    shared_diagnostics: dict[str, Diagnostic] = {}
-    singles: list[FailureGroup] = []
-    for failure in failures:
-        diagnostic = shared_library_diagnostic(failure)
-        if diagnostic is None:
-            singles.append(FailureGroup(None, (failure,)))
-            continue
-        key = diagnostic.describe()
-        shared.setdefault(key, []).append(failure)
-        shared_diagnostics[key] = diagnostic
-    groups = [FailureGroup(shared_diagnostics[key], tuple(items)) for key, items in shared.items()]
-    return groups + singles
 
 
 ProgressCallback = Callable[[RerenderProgress], None]
@@ -94,7 +62,7 @@ class Rerenderer:
         progress: ProgressCallback | None = None,
         cancel: threading.Event | None = None,
     ) -> RerenderReport:
-        report = RerenderReport(applied=apply)
+        report = RerenderReport()
         preamble = self.service.library.preamble()
         processed = 0
         for chunk in chunked(note_ids, CHUNK_SIZE):
@@ -116,7 +84,6 @@ class Rerenderer:
             if record.model_name != note_type.NOTE_TYPE_NAME:
                 continue
             card = to_stored_card(record)
-            report.checked += 1
             card_render = self.service.render_with(preamble, card.front_source, card.back_source)
             title = plain_text_from_source(card.front_source)[:80] or f"Note {card.note_id}"
             if not card_render.ok:

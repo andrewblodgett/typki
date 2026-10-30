@@ -1,16 +1,16 @@
-import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from typki.domain.template import LET_DEFINITION
 from typki.typst_syntax.catalog import CATALOG_MODULES, Catalog, Entry
-from typki.typst_syntax.lexer import KEYWORDS, STATEMENT_KEYWORDS, Mode, lex
+from typki.typst_syntax.lexer import KEYWORDS, STATEMENT_KEYWORDS, Kind, Lexed, Mode, Token, lex
 
-HEADER_DEFINITION = re.compile(r"^[ \t]*#let\s+([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\(([^()]*)\))?\s*=", re.M)
 CODE_PATH_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.")
 MATH_PATH_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.")
 MATH_AUTO_PREFIX_LENGTH = 2
 MAXIMUM_ITEMS = 80
 VALUE_KEYWORDS = frozenset({"none", "auto", "true", "false"})
+LITERAL_KINDS = frozenset({Kind.STRING, Kind.COMMENT, Kind.RAW})
 
 
 @dataclass(frozen=True)
@@ -36,8 +36,8 @@ class CompletionResult:
 
 def header_definitions(header: str) -> tuple[Completion, ...]:
     definitions: dict[str, Completion] = {}
-    for match in HEADER_DEFINITION.finditer(header):
-        name, parameters = match.group(1), match.group(2)
+    for match in LET_DEFINITION.finditer(header):
+        _indent, name, parameters = match.groups()
         if parameters is None:
             definitions.setdefault(name, Completion.plain(name, "header", "variable"))
         else:
@@ -147,6 +147,24 @@ def member_completions(
     return CompletionResult(position - len(typed), position, typed, variant_completions(entry, typed))
 
 
+def literal_is_closed(text: str, token: Token) -> bool:
+    content = text[token.start : token.end]
+    if token.kind == Kind.STRING:
+        return len(content) >= 2 and content.endswith('"')
+    if token.kind == Kind.RAW:
+        return len(content) >= 2 and content.endswith("`")
+    return content.startswith("/*") and content.endswith("*/") and len(content) >= 4
+
+
+def inside_literal(text: str, lexed: Lexed, position: int) -> bool:
+    for token in lexed.tokens:
+        if token.kind not in LITERAL_KINDS or not token.start < position <= token.end:
+            continue
+        if position < token.end or not literal_is_closed(text, token):
+            return True
+    return False
+
+
 def complete(
     text: str,
     position: int,
@@ -154,7 +172,10 @@ def complete(
     header: str = "",
     explicit: bool = False,
 ) -> CompletionResult | None:
-    mode = lex(text).mode_at(position)
+    lexed = lex(text)
+    if inside_literal(text, lexed, position):
+        return None
+    mode = lexed.mode_at(position)
     code_start = path_start(text, position, CODE_PATH_CHARACTERS)
     after_hash = code_start > 0 and text[code_start - 1] == "#"
     if after_hash or mode == Mode.CODE:

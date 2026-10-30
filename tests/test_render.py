@@ -104,3 +104,11 @@ def test_default_header_shrinks_short_cards_and_wraps_long_ones(tmp_path: Path) 
     full_width_pt = 120 * 72 / 25.4 + 2 * 6
     assert width_of("Short.") < full_width_pt / 3
     assert abs(width_of("word " * 80) - full_width_pt) < 1
+
+
+def test_new_fonts_rebuild_the_compiler(library: Library, renderer: Renderer) -> None:
+    preamble = library.preamble()
+    renderer.render_side("x", preamble)
+    first = renderer.compiler_for(preamble.font_fingerprint)
+    assert renderer.compiler_for(preamble.font_fingerprint) is first
+    assert renderer.compiler_for("different-fonts") is not first

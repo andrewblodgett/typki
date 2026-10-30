@@ -46,18 +46,6 @@ class NoteTypeHealth:
     def healthy(self) -> bool:
         return self.exists and not (self.missing_fields or self.templates_differ or self.styling_differs)
 
-    def describe(self) -> str:
-        if not self.exists:
-            return f"The note type '{NOTE_TYPE_NAME}' does not exist."
-        problems = []
-        if self.missing_fields:
-            problems.append(f"missing fields: {', '.join(self.missing_fields)}")
-        if self.templates_differ:
-            problems.append("card template differs from Typki's")
-        if self.styling_differs:
-            problems.append("styling differs from Typki's")
-        return f"The note type '{NOTE_TYPE_NAME}' has problems: " + "; ".join(problems) + "."
-
 
 def diagnose_note_type(
     model_names: list[str],

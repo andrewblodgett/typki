@@ -592,3 +592,26 @@ def test_matching_bracket_is_highlighted(qtbot: QtBot, window: MainWindow) -> No
     cursor.setPosition(3)
     editor.setTextCursor(cursor)
     assert [selection.cursor.selectionStart() for selection in editor.bracket_selections] == [2, 4]
+
+
+def test_editing_after_astral_characters_keeps_text_intact(qtbot: QtBot, window: MainWindow) -> None:
+    editor = window.capture.front_editor
+    editor.setFocus()
+    editor.setPlainText("𝒜 😀 first\nsecond\nthird")
+    cursor = editor.textCursor()
+    cursor.movePosition(QTextCursor.MoveOperation.Down)
+    editor.setTextCursor(cursor)
+    qtbot.keyClick(editor, Qt.Key.Key_Down, Qt.KeyboardModifier.AltModifier)
+    assert editor.toPlainText() == "𝒜 😀 first\nthird\nsecond"
+    editor.moveCursor(QTextCursor.MoveOperation.End)
+    qtbot.keyClicks(editor, " $fr")
+    qtbot.waitUntil(editor.completion_popup.is_visible, timeout=WAIT_MS)
+    qtbot.keyClick(editor.completion_popup.view, Qt.Key.Key_Tab)
+    assert editor.toPlainText() == "𝒜 😀 first\nthird\nsecond $frac()$"
+
+
+def test_unsent_saves_go_to_the_outbox_on_close(window: MainWindow) -> None:
+    draft = CardDraft(deck_name="Default", template_name="", tags=(), front="a", back="b")
+    window.save_queue.pending.append(draft)
+    window.save_queue.persist_unsent()
+    assert [queued.source_id for queued in window.save_queue.outbox.drafts()] == [draft.source_id]

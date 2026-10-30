@@ -1,5 +1,5 @@
 import uuid
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 
 def new_source_id() -> str:
@@ -15,13 +15,6 @@ class CardDraft:
     back: str
     source_id: str = field(default_factory=new_source_id)
     note_id: int | None = None
-
-    @property
-    def is_editing(self) -> bool:
-        return self.note_id is not None
-
-    def next_blank(self, front: str, back: str) -> CardDraft:
-        return replace(self, front=front, back=back, source_id=new_source_id(), note_id=None)
 
 
 @dataclass(frozen=True)

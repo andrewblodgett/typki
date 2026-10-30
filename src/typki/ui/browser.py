@@ -5,6 +5,7 @@ from PySide6.QtGui import QIcon, QImage, QKeyEvent, QKeySequence, QPainter, QPix
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu, QVBoxLayout, QWidget
 
+from typki.anki.gateway import AnkiUnavailableError
 from typki.card_service import CardService, SearchResult
 from typki.render.svg_postprocess import svg_for_display
 from typki.ui.background import TaskRunner
@@ -139,7 +140,7 @@ class BrowserPage(QWidget):
         self.anki_runner.run(
             lambda: load_page(self.service, query, offset, color),
             lambda page: self.on_page(generation, reset, page),
-            lambda _error: self.on_failed(generation),
+            lambda error: self.on_failed(generation, error),
         )
 
     def on_page(self, generation: int, reset: bool, page: BrowsePage) -> None:
@@ -165,9 +166,12 @@ class BrowserPage(QWidget):
             self.results.setCurrentRow(0)
         self.on_scrolled()
 
-    def on_failed(self, generation: int) -> None:
-        if generation == self.generation:
-            self.loading = False
+    def on_failed(self, generation: int, error: Exception) -> None:
+        if generation != self.generation:
+            return
+        self.loading = False
+        if not isinstance(error, AnkiUnavailableError):
+            self.anki_runner.default_error(error)
 
     def on_scrolled(self, _value: int = 0) -> None:
         scroll_bar = self.results.verticalScrollBar()

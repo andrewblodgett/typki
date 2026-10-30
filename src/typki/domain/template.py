@@ -2,7 +2,7 @@ import re
 from dataclasses import dataclass
 
 PLACEHOLDER_PATTERN = re.compile(r"«[^«»\n]*»")
-FUNCTION_DEFINITION = re.compile(r"^#let\s+([A-Za-z_][\w-]*)\(([^()]*)\)\s*=", re.M)
+LET_DEFINITION = re.compile(r"^([ \t]*)#let\s+([A-Za-z_][\w-]*)(?:\(([^()]*)\))?\s*=", re.M)
 BLANK_TITLE = "Blank"
 
 
@@ -37,9 +37,11 @@ def template_call(name: str, parameter_list: str) -> str:
 
 def templates_from_header(header: str) -> tuple[Template, ...]:
     templates: dict[str, Template] = {}
-    for match in FUNCTION_DEFINITION.finditer(header):
-        name = match.group(1)
-        templates.setdefault(name, Template(name=name, front=template_call(name, match.group(2))))
+    for match in LET_DEFINITION.finditer(header):
+        indent, name, parameters = match.groups()
+        if indent or parameters is None:
+            continue
+        templates.setdefault(name, Template(name=name, front=template_call(name, parameters)))
     return (BLANK, *templates.values())
 
 

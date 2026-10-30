@@ -478,4 +478,7 @@ class Lexer:
 
 @lru_cache(maxsize=8)
 def lex(text: str) -> Lexed:
-    return Lexer(text).run()
+    try:
+        return Lexer(text).run()
+    except RecursionError:
+        return Lexed((), ())

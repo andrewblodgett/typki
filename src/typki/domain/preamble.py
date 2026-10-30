@@ -26,6 +26,7 @@ DEFAULT_HEADER = """#set page(width: auto, height: auto, margin: 6pt, fill: none
 class Preamble:
     header: str
     hash: str
+    font_fingerprint: str = ""
 
     @property
     def line_count(self) -> int:
@@ -49,4 +50,6 @@ def compute_preamble_hash(header: str, font_fingerprint: str) -> str:
 
 def build_preamble(header_text: str, font_fingerprint: str) -> Preamble:
     header = normalized_header(header_text)
-    return Preamble(header=header, hash=compute_preamble_hash(header, font_fingerprint))
+    return Preamble(
+        header=header, hash=compute_preamble_hash(header, font_fingerprint), font_fingerprint=font_fingerprint
+    )

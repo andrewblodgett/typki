@@ -190,3 +190,15 @@ def test_keywords_complete_with_a_minimal_catalog() -> None:
     result = complete("#le", 3, catalog)
     assert result is not None
     assert result.items[0].insert == "let "
+
+
+def test_no_completion_inside_strings_comments_or_raw(catalog: Catalog) -> None:
+    for text in ('#text("hel', "$x // al", "#let a = 1 /* te", "``` te"):
+        assert complete(text, len(text), catalog, explicit=True) is None
+    closed = '#f("a", ca'
+    assert complete(closed, len(closed), catalog, explicit=True) is not None
+
+
+def test_deep_nesting_does_not_crash_the_lexer() -> None:
+    text = "#f(" * 3000
+    assert lex(text).mode_at(len(text)) == Mode.MARKUP

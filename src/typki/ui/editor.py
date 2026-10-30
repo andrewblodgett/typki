@@ -31,9 +31,10 @@ from typki.domain.template import PLACEHOLDER_PATTERN, placeholder_spans
 from typki.render.diagnostics import Diagnostic
 from typki.typst_syntax import editing
 from typki.typst_syntax.catalog import typst_catalog
-from typki.typst_syntax.completion import Completion, CompletionResult, complete
+from typki.typst_syntax.completion import CompletionResult, complete
 from typki.typst_syntax.editing import Edit
 from typki.typst_syntax.lexer import SPAN_KINDS, Kind, lex
+from typki.ui.text_positions import TextPositions
 from typki.ui.theme import DEFAULT_THEME, Theme, code_font
 
 INDENT = editing.INDENT
@@ -109,6 +110,7 @@ class TypstHighlighter(QSyntaxHighlighter):
     def __init__(self, document: QTextDocument) -> None:
         super().__init__(document)
         self.cached_text: str | None = None
+        self.cached_positions = TextPositions("")
         self.cached_spans: list[Span] = []
         self.set_theme(DEFAULT_THEME)
 
@@ -122,9 +124,13 @@ class TypstHighlighter(QSyntaxHighlighter):
         text = self.document().toPlainText()
         if text == self.cached_text:
             return self.cached_spans
+        positions = TextPositions(text)
         tokens = lex(text).tokens
         span_tokens = [token for token in tokens if token.kind in SPAN_KINDS]
-        spans: list[Span] = [(token.start, token.end, self.kind_formats[token.kind]) for token in span_tokens]
+        spans: list[Span] = [
+            (positions.to_qt(token.start), positions.to_qt(token.end), self.kind_formats[token.kind])
+            for token in span_tokens
+        ]
         for token in tokens:
             if token.kind in SPAN_KINDS:
                 continue
@@ -133,22 +139,27 @@ class TypstHighlighter(QSyntaxHighlighter):
                 if span.start <= token.start < span.end:
                     token_format.merge(self.kind_formats[span.kind])
                     token_format.merge(self.kind_formats[token.kind])
-            spans.append((token.start, token.end, token_format))
+            spans.append((positions.to_qt(token.start), positions.to_qt(token.end), token_format))
         self.cached_text = text
+        self.cached_positions = positions
         self.cached_spans = spans
         return spans
 
     def highlightBlock(self, text: str) -> None:
-        block_start = self.currentBlock().position()
-        block_end = block_start + len(text)
-        for start, end, token_format in self.document_spans():
+        spans = self.document_spans()
+        block = self.currentBlock()
+        block_start = block.position()
+        block_end = block_start + max(block.length() - 1, 0)
+        for start, end, token_format in spans:
             if end <= block_start or start >= block_end:
                 continue
             clipped_start = max(start, block_start)
             self.setFormat(clipped_start - block_start, min(end, block_end) - clipped_start, token_format)
+        block_positions = TextPositions(text)
         for match in PLACEHOLDER_PATTERN.finditer(text):
-            self.setFormat(match.start(), match.end() - match.start(), self.placeholder_format)
-        prefix = self.document().toPlainText()[:block_end]
+            start = block_positions.to_qt(match.start())
+            self.setFormat(start, block_positions.to_qt(match.end()) - start, self.placeholder_format)
+        prefix = (self.cached_text or "")[: self.cached_positions.from_qt(block_end)]
         self.setCurrentBlockState(zlib.crc32(prefix.encode()) & 0x3FFFFFFF)
 
 
@@ -184,7 +195,6 @@ class CompletionPopup(QObject):
     def __init__(self, editor: TypstEditor) -> None:
         super().__init__(editor)
         self.editor = editor
-        self.result: CompletionResult | None = None
         self.model = QStandardItemModel(self)
         self.completer = QCompleter(self.model, editor)
         self.completer.setWidget(editor)
@@ -208,14 +218,12 @@ class CompletionPopup(QObject):
         return self.view.isVisible()
 
     def hide(self) -> None:
-        self.result = None
         self.view.hide()
 
     def show_result(self, result: CompletionResult | None) -> None:
         if result is None or not result.items:
             self.hide()
             return
-        self.result = result
         self.model.clear()
         for completion in result.items:
             item = QStandardItem(completion.label)
@@ -228,14 +236,8 @@ class CompletionPopup(QObject):
         self.view.setCurrentIndex(self.completer.completionModel().index(0, 0))
 
     def on_activated(self, label: str) -> None:
-        result = self.result
         self.hide()
-        if result is None:
-            return
-        for completion in result.items:
-            if completion.label == label:
-                self.editor.insert_completion(result, completion)
-                return
+        self.editor.accept_completion(label)
 
 
 class TypstEditor(QPlainTextEdit):
@@ -314,9 +316,7 @@ class TypstEditor(QPlainTextEdit):
     def handle_editing_key(self, event: QKeyEvent) -> bool:
         key = event.key()
         modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
-        cursor = self.textCursor()
-        start, end = cursor.selectionStart(), cursor.selectionEnd()
-        text = self.toPlainText()
+        text, start, end = self.text_and_selection()
         if key == Qt.Key.Key_Tab and modifiers == Qt.KeyboardModifier.NoModifier:
             if "\n" in text[start:end]:
                 self.apply_edit(editing.indent_lines(text, start, end))
@@ -348,52 +348,70 @@ class TypstEditor(QPlainTextEdit):
     def after_text_key(self, event: QKeyEvent) -> None:
         typed = event.text()
         modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
-        if modifiers not in TEXT_MODIFIERS:
-            return
         is_word = len(typed) == 1 and (typed.isalnum() or typed in "_-")
         is_deletion = event.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete)
         refreshes = is_deletion and self.completion_popup.is_visible()
-        if is_word or typed in COMPLETION_TRIGGER_CHARACTERS or refreshes:
+        typing = modifiers in TEXT_MODIFIERS
+        if typing and (is_word or typed in COMPLETION_TRIGGER_CHARACTERS or refreshes):
             self.update_completion(explicit=False)
         else:
             self.completion_popup.hide()
 
-    def update_completion(self, explicit: bool) -> None:
+    def text_and_selection(self) -> tuple[str, int, int]:
+        text = self.toPlainText()
+        positions = TextPositions(text)
         cursor = self.textCursor()
-        if cursor.hasSelection():
+        return text, positions.from_qt(cursor.selectionStart()), positions.from_qt(cursor.selectionEnd())
+
+    def text_and_anchor(self) -> tuple[str, int, int]:
+        text = self.toPlainText()
+        positions = TextPositions(text)
+        cursor = self.textCursor()
+        return text, positions.from_qt(cursor.anchor()), positions.from_qt(cursor.position())
+
+    def select_range(self, anchor: int, position: int) -> None:
+        positions = TextPositions(self.toPlainText())
+        cursor = self.textCursor()
+        cursor.setPosition(positions.to_qt(anchor))
+        cursor.setPosition(positions.to_qt(position), QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
+
+    def replace_range(self, start: int, end: int, replacement: str) -> None:
+        positions = TextPositions(self.toPlainText())
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        cursor.setPosition(positions.to_qt(start))
+        cursor.setPosition(positions.to_qt(end), QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(replacement)
+        cursor.endEditBlock()
+
+    def update_completion(self, explicit: bool) -> None:
+        text, start, end = self.text_and_selection()
+        if start != end:
             self.completion_popup.hide()
             return
-        result = complete(
-            self.toPlainText(), cursor.position(), typst_catalog(), self.definitions_source(), explicit
-        )
+        result = complete(text, end, typst_catalog(), self.definitions_source(), explicit)
         self.completion_popup.show_result(result)
 
-    def insert_completion(self, result: CompletionResult, completion: Completion) -> None:
-        cursor = self.textCursor()
-        position = cursor.position()
-        cursor.beginEditBlock()
-        cursor.setPosition(result.replace_start)
-        cursor.setPosition(position, QTextCursor.MoveMode.KeepAnchor)
-        cursor.insertText(completion.insert)
-        cursor.endEditBlock()
-        cursor.setPosition(result.replace_start + completion.cursor_offset)
-        self.setTextCursor(cursor)
+    def accept_completion(self, label: str) -> None:
+        text, start, end = self.text_and_selection()
+        if start != end:
+            return
+        result = complete(text, end, typst_catalog(), self.definitions_source(), explicit=True)
+        completion = next((item for item in result.items if item.label == label), None) if result else None
+        if result is None or completion is None:
+            return
+        self.replace_range(result.replace_start, result.replace_end, completion.insert)
+        target = result.replace_start + completion.cursor_offset
+        self.select_range(target, target)
 
     def apply_edit(self, edit: Edit) -> None:
-        cursor = self.textCursor()
         if edit.start != edit.end or edit.replacement:
-            cursor.beginEditBlock()
-            cursor.setPosition(edit.start)
-            cursor.setPosition(edit.end, QTextCursor.MoveMode.KeepAnchor)
-            cursor.insertText(edit.replacement)
-            cursor.endEditBlock()
-        cursor.setPosition(edit.selection_start)
-        cursor.setPosition(edit.selection_end, QTextCursor.MoveMode.KeepAnchor)
-        self.setTextCursor(cursor)
+            self.replace_range(edit.start, edit.end, edit.replacement)
+        self.select_range(edit.selection_start, edit.selection_end)
 
     def selection_edit(self, operation: Callable[[str, int, int], Edit | None]) -> None:
-        cursor = self.textCursor()
-        edit = operation(self.toPlainText(), cursor.selectionStart(), cursor.selectionEnd())
+        edit = operation(*self.text_and_selection())
         if edit is not None:
             self.apply_edit(edit)
 
@@ -416,60 +434,50 @@ class TypstEditor(QPlainTextEdit):
         self.selection_edit(lambda text, start, end: editing.duplicate_lines(text, start, end, upward))
 
     def insert_line_above(self) -> None:
-        self.apply_edit(editing.insert_line_above(self.toPlainText(), self.textCursor().position()))
+        text, _anchor, position = self.text_and_anchor()
+        self.apply_edit(editing.insert_line_above(text, position))
 
     def select_lines(self) -> None:
-        cursor = self.textCursor()
-        start, end = editing.select_lines(self.toPlainText(), cursor.selectionStart(), cursor.selectionEnd())
-        cursor.setPosition(start)
-        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
-        self.setTextCursor(cursor)
+        text, start, end = self.text_and_selection()
+        self.select_range(*editing.select_lines(text, start, end))
 
     def smart_home(self, extend: bool) -> None:
-        cursor = self.textCursor()
-        target = editing.smart_home(self.toPlainText(), cursor.position())
-        mode = QTextCursor.MoveMode.KeepAnchor if extend else QTextCursor.MoveMode.MoveAnchor
-        cursor.setPosition(target, mode)
-        self.setTextCursor(cursor)
+        text, anchor, position = self.text_and_anchor()
+        target = editing.smart_home(text, position)
+        self.select_range(anchor if extend else target, target)
 
     def select_placeholder(self, forward: bool, from_position: int | None = None) -> bool:
-        spans = placeholder_spans(self.toPlainText())
+        text, start, end = self.text_and_selection()
+        spans = placeholder_spans(text)
         if not spans:
             return False
-        cursor = self.textCursor()
-        if from_position is not None:
-            anchor = from_position
-        elif forward:
-            anchor = cursor.selectionEnd()
-        else:
-            anchor = cursor.selectionStart()
+        cursor_anchor = end if forward else start
+        anchor = cursor_anchor if from_position is None else from_position
         if forward:
             candidates = [span for span in spans if span[0] >= anchor] or spans
-            start, end = candidates[0]
+            span_start, span_end = candidates[0]
         else:
             candidates = [span for span in spans if span[1] <= anchor] or spans
-            start, end = candidates[-1]
-        cursor.setPosition(start)
-        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
-        self.setTextCursor(cursor)
+            span_start, span_end = candidates[-1]
+        self.select_range(span_start, span_end)
         return True
 
     def highlight_matching_brackets(self) -> None:
         self.bracket_selections = []
-        cursor = self.textCursor()
-        if not cursor.hasSelection():
-            pair = matching_bracket_pair(self.toPlainText(), cursor.position())
-            if pair is not None:
-                background = QColor(self.theme.accent)
-                background.setAlpha(70)
-                for position in pair:
-                    selection = QTextEdit.ExtraSelection()
-                    bracket_cursor = self.textCursor()
-                    bracket_cursor.setPosition(position)
-                    bracket_cursor.setPosition(position + 1, QTextCursor.MoveMode.KeepAnchor)
-                    selection.cursor = bracket_cursor
-                    selection.format.setBackground(background)
-                    self.bracket_selections.append(selection)
+        text, start, end = self.text_and_selection()
+        pair = matching_bracket_pair(text, end) if start == end else None
+        if pair is not None:
+            positions = TextPositions(text)
+            background = QColor(self.theme.accent)
+            background.setAlpha(70)
+            for index in pair:
+                bracket_cursor = self.textCursor()
+                bracket_cursor.setPosition(positions.to_qt(index))
+                bracket_cursor.setPosition(positions.to_qt(index + 1), QTextCursor.MoveMode.KeepAnchor)
+                selection = QTextEdit.ExtraSelection()
+                selection.cursor = bracket_cursor
+                selection.format.setBackground(background)
+                self.bracket_selections.append(selection)
         self.refresh_extra_selections()
 
     def refresh_extra_selections(self) -> None:
@@ -496,8 +504,9 @@ class TypstEditor(QPlainTextEdit):
 
     def cursor_at(self, line: int, column: int) -> QTextCursor:
         block = self.document().findBlockByNumber(max(line - 1, 0))
+        block_text = block.text()
+        offset = TextPositions(block_text).to_qt(min(max(column - 1, 0), len(block_text)))
         cursor = QTextCursor(block)
-        offset = min(max(column - 1, 0), max(block.length() - 1, 0))
         cursor.setPosition(block.position() + offset)
         return cursor
 
