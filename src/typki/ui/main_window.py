@@ -167,7 +167,9 @@ class MainWindow(QMainWindow):
         self.menu.addSeparator()
         self.theme_menu = self.menu.addMenu("Theme")
         self.theme_actions = QActionGroup(self)
-        for theme in THEMES:
+        for previous, theme in zip((None, *THEMES), THEMES, strict=False):
+            if previous is not None and previous.dark != theme.dark:
+                self.theme_menu.addSeparator()
             theme_action = self.theme_menu.addAction(theme.name)
             theme_action.setCheckable(True)
             theme_action.setData(theme.name)

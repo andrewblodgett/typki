@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from PySide6.QtCore import QByteArray, QEvent, QObject, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QImage, QKeyEvent, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtGui import QIcon, QImage, QKeyEvent, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QLineEdit, QListView, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
@@ -152,7 +152,10 @@ class BrowserPage(QWidget):
             if summary.stale:
                 details = f"{details} · {STALE_MARKER}" if details else STALE_MARKER
             item = QListWidgetItem(details)
-            item.setIcon(QPixmap.fromImage(thumbnail))
+            pixmap = QPixmap.fromImage(thumbnail)
+            icon = QIcon(pixmap)
+            icon.addPixmap(pixmap, QIcon.Mode.Selected)
+            item.setIcon(icon)
             item.setData(NOTE_ID_ROLE, card.note_id)
             self.results.addItem(item)
         if reset and self.results.count():
