@@ -20,6 +20,7 @@ from typki.typst_syntax.editing import (
     toggle_line_comment,
     type_character,
 )
+from typki.typst_syntax.highlight import StyledRange, styled_ranges
 from typki.typst_syntax.lexer import Kind, Mode, Token, lex
 
 HEADER = "#let RR = $bb(R)$\n#let defn(term, body) = [*#term.* #body]\n"
@@ -239,3 +240,11 @@ def test_deep_nesting_does_not_crash_the_lexer() -> None:
     lexed = lex(text)
     assert lexed.mode_at(len(text)) == Mode.MARKUP
     assert lexed.tokens[0] == Token(0, 1, Kind.FUNCTION)
+
+
+def test_styled_ranges_know_their_enclosing_spans() -> None:
+    text = "= Title $x$\n*bold #f[*inner*] $y$* plain $z$"
+    ranges = styled_ranges(lex(text).tokens)
+    math = {text[r.start : r.end]: r.enclosing for r in ranges if r.kind == Kind.MATH_TEXT}
+    assert math == {"x": {Kind.HEADING}, "y": {Kind.STRONG}, "z": frozenset()}
+    assert ranges[0] == StyledRange(0, 11, Kind.HEADING)

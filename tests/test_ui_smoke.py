@@ -576,6 +576,33 @@ def test_matching_bracket_is_highlighted(editor: TypstEditor) -> None:
     assert [selection.cursor.selectionStart() for selection in editor.bracket_selections] == [2, 4]
 
 
+def foreground_at(editor: TypstEditor, line: int, column: int) -> str | None:
+    block = editor.document().findBlockByNumber(line)
+    for format_range in block.layout().formats():
+        if format_range.start <= column < format_range.start + format_range.length:
+            return format_range.format.foreground().color().name()
+    return None
+
+
+def test_highlighting_restyles_the_lines_after_an_edit(editor: TypstEditor) -> None:
+    theme = editor.theme
+    editor.setPlainText("plain\n\n$x$ 😀 #f()\nlast $y$")
+    assert foreground_at(editor, 0, 0) is None
+    assert foreground_at(editor, 2, 1) == theme.math
+    assert foreground_at(editor, 2, 8) == theme.function
+    assert foreground_at(editor, 3, 6) == theme.math
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    cursor.insertText("/*")
+    assert [foreground_at(editor, line, 1) for line in (0, 2, 3)] == [theme.comment] * 3
+    cursor.deletePreviousChar()
+    cursor.deletePreviousChar()
+    assert foreground_at(editor, 2, 1) == theme.math
+    assert foreground_at(editor, 3, 0) is None
+    editor.set_theme(find_theme("Solarized Light"))
+    assert foreground_at(editor, 2, 1) == editor.theme.math != theme.math
+
+
 def test_editing_after_astral_characters_keeps_text_intact(qtbot: QtBot, editor: TypstEditor) -> None:
     editor.setPlainText("𝒜 😀 first\nsecond\nthird")
     cursor = editor.textCursor()
