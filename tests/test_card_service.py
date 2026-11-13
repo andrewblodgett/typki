@@ -134,6 +134,19 @@ def test_delete_removes_note(
     assert note_id not in fake.notes
 
 
+def test_card_deleted_in_anki_is_saved_as_a_new_note(
+    service: CardService, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    _, fake = fake_ankiconnect
+    draft = make_draft()
+    deleted_id = service.save(draft).note_id
+    fake.notes.clear()
+    edited = CardDraft(DECK, "", (), "edited front", "edited back", draft.source_id, deleted_id)
+    result = service.save(edited)
+    assert result.created and result.note_id != deleted_id
+    assert fake.notes[result.note_id].fields[note_type.FRONT_SOURCE] == "edited front"
+
+
 def test_open_rejects_foreign_notes(
     service: CardService, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
 ) -> None:
