@@ -20,6 +20,7 @@ from typki.card_service import CardService
 from typki.domain.card import CardDraft
 from typki.library.draft_folder import DraftFolder
 from typki.ui.background import TaskRunner
+from typki.ui.browser import BrowserPage
 from typki.ui.capture import CapturePage
 from typki.ui.editor import TypstEditor
 from typki.ui.main_window import MainWindow
@@ -43,6 +44,11 @@ def settle(window: MainWindow) -> None:
         window.anki_runner.wait()
         window.render_runner.wait()
         QApplication.processEvents()
+
+
+@pytest.fixture(autouse=True)
+def confirm_deletes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(BrowserPage, "confirm_delete", lambda _page: True)
 
 
 @pytest.fixture
@@ -741,6 +747,72 @@ def test_offline_card_says_it_is_queued(
     qtbot.waitUntil(
         lambda: window.capture.save_status_label.text() == "Queued until Anki is open", timeout=WAIT_MS
     )
+    window.reconnect_timer.stop()
+
+
+def test_browse_shows_a_card_edited_just_before_switching(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    capture, browser = window.capture, window.browser
+    type_card(window, "Real Analysis", "brand new card", "answer")
+    qtbot.waitUntil(lambda: capture.last_render_ok, timeout=WAIT_MS)
+    window.tabs.setCurrentIndex(1)
+    qtbot.waitUntil(lambda: browser.results.count() == 1, timeout=WAIT_MS)
+    window.tabs.setCurrentIndex(0)
+    capture.tags_edit.setText("fresh-tag")
+    window.tabs.setCurrentIndex(1)
+    qtbot.waitUntil(lambda: "fresh-tag" in browser.results.item(0).text(), timeout=WAIT_MS)
+
+
+def test_browse_reload_stays_on_the_selected_card(
+    qtbot: QtBot, window: MainWindow, service: CardService
+) -> None:
+    service.save(CardDraft("Real Analysis", "", (), "zebra", ""))
+    note_ids = [
+        service.save(CardDraft("Real Analysis", "", (), f"card {index}", "")).note_id for index in range(44)
+    ]
+    browser = window.browser
+    window.tabs.setCurrentIndex(1)
+    qtbot.waitUntil(lambda: browser.results.count() == 40, timeout=WAIT_MS)
+    browser.results.verticalScrollBar().setValue(browser.results.verticalScrollBar().maximum())
+    qtbot.waitUntil(lambda: browser.results.count() == 45, timeout=WAIT_MS)
+    select_card(window, note_ids[1])
+    window.tabs.setCurrentIndex(0)
+    window.tabs.setCurrentIndex(1)
+    settle(window)
+    assert browser.results.count() == 45
+    assert browser.current_note_id() == note_ids[1]
+    browser.search_edit.setText("zebra")
+    qtbot.waitUntil(lambda: browser.results.count() == 1, timeout=WAIT_MS)
+    assert browser.results.currentRow() == 0
+
+
+def test_declining_the_delete_prompt_keeps_the_card(
+    qtbot: QtBot,
+    window: MainWindow,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, fake = fake_ankiconnect
+    kept = service.save(CardDraft("Real Analysis", "", (), "keep me", "")).note_id
+    window.tabs.setCurrentIndex(1)
+    qtbot.waitUntil(lambda: window.browser.results.count() == 1, timeout=WAIT_MS)
+    select_card(window, kept)
+    monkeypatch.setattr(BrowserPage, "confirm_delete", lambda _page: False)
+    qtbot.keyClick(window.browser.results, Qt.Key.Key_Backspace)
+    settle(window)
+    assert kept in fake.notes
+    assert window.browser.results.count() == 1
+
+
+def test_browse_notices_when_anki_goes_away(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    gateway, _ = fake_ankiconnect
+    gateway.url = DEAD_URL
+    window.tabs.setCurrentIndex(1)
+    qtbot.waitUntil(lambda: window.indicator.text().startswith("Offline"), timeout=WAIT_MS)
     window.reconnect_timer.stop()
 
 

@@ -66,6 +66,11 @@ def note_type_query() -> str:
     return quoted_term("note", NOTE_TYPE_NAME)
 
 
+def typki_notes_matching(user_query: str) -> str:
+    # Without the parentheses, "a or b" would also match notes of other types that contain b.
+    return f"{note_type_query()} ({user_query})" if user_query.strip() else note_type_query()
+
+
 def to_stored_card(record: NoteRecord) -> StoredCard:
     fields = record.fields
     return StoredCard(
@@ -223,7 +228,7 @@ class CardService:
             self.gateway.delete_notes([note_id])
 
     def search(self, query: str, offset: int = 0, limit: int = DEFAULT_SEARCH_LIMIT) -> SearchResult:
-        note_ids = sorted(self.gateway.find_notes(f"{note_type_query()} {query}".strip()), reverse=True)
+        note_ids = sorted(self.gateway.find_notes(typki_notes_matching(query)), reverse=True)
         records = self.gateway.notes_info(note_ids[offset : offset + limit])
         preamble = self.library.preamble()
         summaries = tuple(

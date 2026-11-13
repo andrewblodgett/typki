@@ -134,6 +134,7 @@ class MainWindow(QMainWindow):
         self.rerender.state_changed.connect(self.update_indicator)
         browser.open_requested.connect(self.open_note)
         browser.delete_requested.connect(self.delete_note)
+        browser.anki_unreachable.connect(self.on_went_offline)
         self.install_actions(shortcuts)
         self.apply_theme(theme)
 
@@ -215,7 +216,7 @@ class MainWindow(QMainWindow):
         self.global_page.set_theme(theme)
         self.setup_page.set_theme(theme)
         if self.browser.results.count():
-            self.browser.refresh()
+            self.browser.reload()
 
     def on_tab_changed(self, index: int) -> None:
         if self.previous_tab == GLOBAL_TAB and index != GLOBAL_TAB:
@@ -225,7 +226,7 @@ class MainWindow(QMainWindow):
         self.previous_tab = index
         if index == BROWSE_TAB:
             self.capture.flush()
-            self.browser.refresh()
+            self.browser.reload()
         if index == GLOBAL_TAB:
             self.global_page.set_sample(
                 self.capture.front_editor.toPlainText(), self.capture.back_editor.toPlainText()
@@ -310,7 +311,7 @@ class MainWindow(QMainWindow):
         self.save_queue.go_online()
         self.rerender.request()
         if self.tabs.currentIndex() == BROWSE_TAB:
-            self.browser.refresh()
+            self.browser.reload()
         self.update_indicator()
 
     def on_anki_unavailable(self, error: Exception) -> None:
@@ -339,6 +340,8 @@ class MainWindow(QMainWindow):
 
     def on_card_saved(self, source_id: str, _result: SaveResult) -> None:
         self.rejected_drafts.remove(source_id)
+        if self.tabs.currentIndex() == BROWSE_TAB:
+            self.browser.reload()
         self.update_indicator()
 
     def reopen_rejected(self) -> None:

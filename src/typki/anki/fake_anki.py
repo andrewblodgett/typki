@@ -160,12 +160,10 @@ class FakeAnki:
             self.notes.pop(note_id, None)
 
     def action_findNotes(self, query: str) -> list[int]:
-        terms = shlex.split(query)
-        return sorted(
-            note.note_id
-            for note in self.notes.values()
-            if all(self.matches_term(note, term) for term in terms)
-        )
+        words = shlex.shlex(query, posix=True, punctuation_chars="()")
+        words.whitespace_split = True
+        search = parse_search(list(words))
+        return sorted(note.note_id for note in self.notes.values() if search.matches(self, note))
 
     def action_notesInfo(self, notes: list[int]) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
@@ -241,6 +239,46 @@ class FakeAnki:
         if note_id not in self.notes:
             raise ValueError(f"note was not found: {note_id}")
         return self.notes[note_id]
+
+
+@dataclass(frozen=True)
+class SearchTerm:
+    text: str
+
+    def matches(self, anki: FakeAnki, note: FakeNote) -> bool:
+        return anki.matches_term(note, self.text)
+
+
+@dataclass(frozen=True)
+class SearchGroup:
+    alternatives: list[list[SearchTerm | SearchGroup]]
+
+    def matches(self, anki: FakeAnki, note: FakeNote) -> bool:
+        return any(all(part.matches(anki, note) for part in parts) for parts in self.alternatives)
+
+
+def parse_search(words: list[str]) -> SearchGroup:
+    group, rest = parse_search_group(words)
+    if rest:
+        raise ValueError("unbalanced parentheses in search")
+    return group
+
+
+def parse_search_group(words: list[str]) -> tuple[SearchGroup, list[str]]:
+    alternatives: list[list[SearchTerm | SearchGroup]] = [[]]
+    while words and words[0] != ")":
+        word, words = words[0], words[1:]
+        if word == "(":
+            inner, words = parse_search_group(words)
+            if not words:
+                raise ValueError("unbalanced parentheses in search")
+            alternatives[-1].append(inner)
+            words = words[1:]
+        elif word.lower() == "or":
+            alternatives.append([])
+        else:
+            alternatives[-1].append(SearchTerm(word))
+    return SearchGroup(alternatives), words
 
 
 def deck_and_ancestors(deck_name: str) -> list[str]:

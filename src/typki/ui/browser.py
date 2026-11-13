@@ -3,7 +3,15 @@ from dataclasses import dataclass
 from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QImage, QKeyEvent, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu, QWidget
+from PySide6.QtWidgets import (
+    QLineEdit,
+    QListView,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QMessageBox,
+    QWidget,
+)
 
 from typki.anki.gateway import AnkiUnavailableError
 from typki.card_service import CardService, SearchResult
@@ -52,8 +60,8 @@ def render_thumbnail(svg_text: str, color: str) -> QImage:
     return image
 
 
-def load_page(service: CardService, query: str, offset: int, color: str) -> BrowsePage:
-    search = service.search(query, offset=offset, limit=PAGE_SIZE)
+def load_page(service: CardService, query: str, offset: int, limit: int, color: str) -> BrowsePage:
+    search = service.search(query, offset=offset, limit=limit)
     thumbnails = tuple(render_thumbnail(summary.card.front_svg, color) for summary in search.cards)
     return BrowsePage(search=search, thumbnails=thumbnails)
 
@@ -64,6 +72,7 @@ DELETE_SHORTCUTS = ("Delete", "Ctrl+Delete", "Backspace")
 class BrowserPage(QWidget):
     open_requested = Signal(object)
     delete_requested = Signal(object)
+    anki_unreachable = Signal()
 
     def __init__(self, service: CardService, anki_runner: TaskRunner, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -90,9 +99,9 @@ class BrowserPage(QWidget):
 
         page(self, self.search_edit, (self.results, 1))
 
-        self.search_timer = debouncer(self, SEARCH_DEBOUNCE_MS, self.refresh)
+        self.search_timer = debouncer(self, SEARCH_DEBOUNCE_MS, self.search)
         self.search_edit.textChanged.connect(self.search_timer.start)
-        self.search_edit.returnPressed.connect(self.refresh)
+        self.search_edit.returnPressed.connect(self.search)
         self.results.itemActivated.connect(self.on_item_activated)
         self.results.verticalScrollBar().valueChanged.connect(self.on_scrolled)
         self.search_edit.installEventFilter(self)
@@ -117,34 +126,38 @@ class BrowserPage(QWidget):
         self.search_edit.setFocus()
         self.search_edit.selectAll()
 
-    def refresh(self) -> None:
+    def search(self) -> None:
         self.search_timer.stop()
         self.generation += 1
-        self.loading = False
-        self.load_more(reset=True)
+        self.request_page(offset=0, limit=PAGE_SIZE, select_note_id=None)
 
-    def load_more(self, reset: bool = False) -> None:
-        if self.loading:
-            return
-        offset = 0 if reset else self.results.count()
-        if not reset and offset >= self.total:
-            return
+    def reload(self) -> None:
+        self.search_timer.stop()
+        self.generation += 1
+        shown = max(self.results.count(), PAGE_SIZE)
+        self.request_page(offset=0, limit=shown, select_note_id=self.current_note_id())
+
+    def load_more(self) -> None:
+        if not self.loading and self.results.count() < self.total:
+            self.request_page(offset=self.results.count(), limit=PAGE_SIZE, select_note_id=None)
+
+    def request_page(self, offset: int, limit: int, select_note_id: int | None) -> None:
         self.loading = True
         generation = self.generation
         query = self.search_edit.text().strip()
         color = self.palette().text().color().name()
         self.anki_runner.run(
-            lambda: load_page(self.service, query, offset, color),
-            lambda page: self.on_page(generation, reset, page),
+            lambda: load_page(self.service, query, offset, limit, color),
+            lambda page: self.on_page(generation, offset, select_note_id, page),
             lambda error: self.on_failed(generation, error),
         )
 
-    def on_page(self, generation: int, reset: bool, page: BrowsePage) -> None:
+    def on_page(self, generation: int, offset: int, select_note_id: int | None, page: BrowsePage) -> None:
         if generation != self.generation:
             return
-        self.loading = False
         self.total = page.search.total
-        if reset:
+        replaces_list = offset == 0
+        if replaces_list:
             self.results.clear()
         for summary, thumbnail in zip(page.search.cards, page.thumbnails, strict=True):
             card = summary.card
@@ -158,16 +171,30 @@ class BrowserPage(QWidget):
             item.setIcon(icon)
             item.setData(NOTE_ID_ROLE, card.note_id)
             self.results.addItem(item)
-        if reset and self.results.count():
-            self.results.setCurrentRow(0)
+        if replaces_list and self.results.count():
+            self.results.setCurrentRow(self.row_of(select_note_id) or 0)
+        # Only now may scrolling ask for more: clearing a scrolled list moves the scroll bar too.
+        self.loading = False
         self.on_scrolled()
 
     def on_failed(self, generation: int, error: Exception) -> None:
         if generation != self.generation:
             return
         self.loading = False
-        if not isinstance(error, AnkiUnavailableError):
+        if isinstance(error, AnkiUnavailableError):
+            self.anki_unreachable.emit()
+        else:
             self.anki_runner.default_error(error)
+
+    def current_note_id(self) -> int | None:
+        item = self.results.currentItem()
+        return int(item.data(NOTE_ID_ROLE)) if item is not None else None
+
+    def row_of(self, note_id: int | None) -> int | None:
+        for row in range(self.results.count()):
+            if self.results.item(row).data(NOTE_ID_ROLE) == note_id:
+                return row
+        return None
 
     def on_scrolled(self, _value: int = 0) -> None:
         scroll_bar = self.results.verticalScrollBar()
@@ -192,13 +219,23 @@ class BrowserPage(QWidget):
         self.card_menu_for(item).exec(self.results.viewport().mapToGlobal(position))
 
     def request_delete(self) -> None:
-        item = self.results.currentItem()
-        if item is not None:
-            self.delete_requested.emit(int(item.data(NOTE_ID_ROLE)))
+        note_id = self.current_note_id()
+        if note_id is not None and self.confirm_delete():
+            self.delete_requested.emit(note_id)
+
+    def confirm_delete(self) -> bool:
+        box = QMessageBox(self)
+        box.setWindowTitle("Delete card")
+        box.setText("Delete this card from Anki?")
+        box.setInformativeText("Its review history is deleted with it.")
+        delete_button = box.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(delete_button)
+        box.exec()
+        return box.clickedButton() is delete_button
 
     def remove_note(self, note_id: int) -> None:
-        for row in range(self.results.count()):
-            if self.results.item(row).data(NOTE_ID_ROLE) == note_id:
-                self.results.takeItem(row)
-                self.total -= 1
-                return
+        row = self.row_of(note_id)
+        if row is not None:
+            self.results.takeItem(row)
+            self.total -= 1
