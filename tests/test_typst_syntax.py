@@ -201,6 +201,8 @@ def test_move_and_duplicate_lines() -> None:
     assert apply("a\nb\nc", move_lines("a\nb\nc", 2, 2, upward=True)) == ("b\na\nc", 0, 0)
     assert apply("a\nb\nc", move_lines("a\nb\nc", 2, 2, upward=False)) == ("a\nc\nb", 4, 4)
     assert move_lines("a\nb", 0, 0, upward=True) is None
+    assert apply("a\nb\nc", move_lines("a\nb\nc", 2, 4, upward=False)) == ("a\nc\nb", 4, 5)
+    assert apply("a\nb\nc", move_lines("a\nb\nc", 2, 4, upward=False)) == ("a\nc\nb", 4, 5)
     assert apply("a\nb", duplicate_lines("a\nb", 0, 0, upward=False)) == ("a\na\nb", 2, 2)
 
 
