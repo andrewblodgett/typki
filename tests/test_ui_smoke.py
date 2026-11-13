@@ -232,8 +232,12 @@ def test_browse_lists_newest_first_and_filters_as_you_type(
     browser = window.browser
     qtbot.waitUntil(lambda: browser.results.count() == 3, timeout=WAIT_MS)
     assert browser.results.item(0).data(Qt.ItemDataRole.UserRole) == max(fake.notes)
+    assert browser.summary.text() == "3 cards"
     qtbot.keyClicks(browser.search_edit, "beta")
     qtbot.waitUntil(lambda: browser.results.count() == 1, timeout=WAIT_MS)
+    assert browser.summary.text() == "1 card"
+    qtbot.keyClicks(browser.search_edit, " nothinglikethis")
+    qtbot.waitUntil(lambda: browser.summary.text() == "No cards match", timeout=WAIT_MS)
 
 
 def test_browse_loads_more_on_scroll(qtbot: QtBot, window: MainWindow, service: CardService) -> None:
@@ -813,6 +817,7 @@ def test_browse_notices_when_anki_goes_away(
     gateway.url = DEAD_URL
     window.tabs.setCurrentIndex(1)
     qtbot.waitUntil(lambda: window.indicator.text().startswith("Offline"), timeout=WAIT_MS)
+    assert window.browser.summary.text() == "Anki is not running"
     window.reconnect_timer.stop()
 
 

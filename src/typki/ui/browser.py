@@ -4,6 +4,7 @@ from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRectF, QSize, Q
 from PySide6.QtGui import QIcon, QImage, QKeyEvent, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
+    QLabel,
     QLineEdit,
     QListView,
     QListWidget,
@@ -17,7 +18,7 @@ from typki.anki.gateway import AnkiUnavailableError
 from typki.card_service import CardService, SearchResult
 from typki.render.svg_postprocess import svg_for_display
 from typki.ui.background import TaskRunner, debouncer
-from typki.ui.layout import page
+from typki.ui.layout import page, row
 
 THUMBNAIL_WIDTH = 320
 THUMBNAIL_MAX_HEIGHT = 150
@@ -29,6 +30,13 @@ PAGE_SIZE = 40
 LOAD_MORE_MARGIN = 3
 NOTE_ID_ROLE = Qt.ItemDataRole.UserRole
 STALE_MARKER = "stale"
+ANKI_UNREACHABLE_SUMMARY = "Anki is not running"
+
+
+def summary_text(total: int, query: str) -> str:
+    if total == 0:
+        return "No cards match" if query else "No cards yet"
+    return "1 card" if total == 1 else f"{total} cards"
 
 
 @dataclass(frozen=True)
@@ -84,6 +92,8 @@ class BrowserPage(QWidget):
         self.search_edit = QLineEdit()
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.setPlaceholderText("Search")
+        self.summary = QLabel()
+        self.summary.setObjectName("summary")
         self.results = QListWidget()
         self.results.setObjectName("cards")
         self.results.setViewMode(QListView.ViewMode.IconMode)
@@ -97,7 +107,7 @@ class BrowserPage(QWidget):
         )
         self.results.setUniformItemSizes(True)
 
-        page(self, self.search_edit, (self.results, 1))
+        page(self, row((self.search_edit, 1), self.summary), (self.results, 1))
 
         self.search_timer = debouncer(self, SEARCH_DEBOUNCE_MS, self.search)
         self.search_edit.textChanged.connect(self.search_timer.start)
@@ -156,6 +166,7 @@ class BrowserPage(QWidget):
         if generation != self.generation:
             return
         self.total = page.search.total
+        self.summary.setText(summary_text(self.total, self.search_edit.text().strip()))
         replaces_list = offset == 0
         if replaces_list:
             self.results.clear()
@@ -182,6 +193,7 @@ class BrowserPage(QWidget):
             return
         self.loading = False
         if isinstance(error, AnkiUnavailableError):
+            self.summary.setText(ANKI_UNREACHABLE_SUMMARY)
             self.anki_unreachable.emit()
         else:
             self.anki_runner.default_error(error)
@@ -191,9 +203,9 @@ class BrowserPage(QWidget):
         return int(item.data(NOTE_ID_ROLE)) if item is not None else None
 
     def row_of(self, note_id: int | None) -> int | None:
-        for row in range(self.results.count()):
-            if self.results.item(row).data(NOTE_ID_ROLE) == note_id:
-                return row
+        for index in range(self.results.count()):
+            if self.results.item(index).data(NOTE_ID_ROLE) == note_id:
+                return index
         return None
 
     def on_scrolled(self, _value: int = 0) -> None:
@@ -235,7 +247,8 @@ class BrowserPage(QWidget):
         return box.clickedButton() is delete_button
 
     def remove_note(self, note_id: int) -> None:
-        row = self.row_of(note_id)
-        if row is not None:
-            self.results.takeItem(row)
+        index = self.row_of(note_id)
+        if index is not None:
+            self.results.takeItem(index)
             self.total -= 1
+            self.summary.setText(summary_text(self.total, self.search_edit.text().strip()))

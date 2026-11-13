@@ -511,7 +511,7 @@ QListWidget#cards::item:selected {{
 }}
 QLabel#caption {{ color: {theme.muted}; font-weight: 600; padding-left: 2px; }}
 QLabel#message {{ color: {theme.muted}; padding: 0 2px; }}
-QLabel#save-status {{ color: {theme.muted}; padding: 0 8px; }}
+QLabel#save-status, QLabel#summary {{ color: {theme.muted}; padding: 0 8px; }}
 QLabel#message[level="error"], QLabel#save-status[level="error"] {{ color: {theme.error}; }}
 QLabel#message[level="warning"] {{ color: {theme.warning}; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 4px 2px; }}
