@@ -3,8 +3,8 @@ from pathlib import Path
 from typki.domain.card import CardDraft
 from typki.domain.preamble import DEFAULT_HEADER
 from typki.launcher import APP_ID, ensure_launcher, install_launcher, launcher_paths
+from typki.library.draft_folder import DraftFolder
 from typki.library.drafts import DraftStore
-from typki.library.outbox import Outbox
 from typki.library.store import Library
 
 
@@ -43,7 +43,7 @@ def test_draft_round_trip(tmp_path: Path) -> None:
 
 
 def test_outbox_keeps_latest_draft_per_card_in_order(tmp_path: Path) -> None:
-    outbox = Outbox(tmp_path / "outbox")
+    outbox = DraftFolder(tmp_path / "outbox")
     assert outbox.drafts() == [] and outbox.count() == 0
     first = CardDraft("Deck", "", (), "first", "")
     second = CardDraft("Deck", "", (), "second", "")

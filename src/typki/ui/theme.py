@@ -533,6 +533,7 @@ QPushButton#primary {{
 QPushButton#primary:hover {{ background: {theme.text}; }}
 QPushButton:flat {{ background: transparent; color: {theme.muted}; padding: 7px 0; }}
 QPushButton:flat:hover {{ color: {theme.text}; }}
+QPushButton#rejected {{ color: {theme.error}; padding: 2px 12px 6px 12px; }}
 QToolButton {{
   background: transparent; color: {theme.muted}; border: none; border-radius: 8px; padding: 5px 10px;
 }}

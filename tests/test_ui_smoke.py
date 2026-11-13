@@ -18,7 +18,7 @@ from typki.anki.ankiconnect import AnkiConnectGateway
 from typki.anki.fake_anki import FakeAnki
 from typki.card_service import CardService
 from typki.domain.card import CardDraft
-from typki.library.outbox import Outbox
+from typki.library.draft_folder import DraftFolder
 from typki.ui.background import TaskRunner
 from typki.ui.capture import CapturePage
 from typki.ui.editor import TypstEditor
@@ -366,7 +366,7 @@ def test_outbox_survives_restart(
     tmp_path: Path,
 ) -> None:
     gateway, fake = fake_ankiconnect
-    Outbox(tmp_path / "restart" / "outbox").put(
+    DraftFolder(tmp_path / "restart" / "outbox").put(
         CardDraft("Real Analysis", "", (), "queued before restart", "")
     )
     restarted = build_window(service, gateway, tmp_path / "restart")
@@ -640,7 +640,7 @@ def test_card_without_back_is_kept_and_never_saved(
     assert capture.back_editor.hasFocus()
     capture.back_editor.setPlainText("the answer")
     qtbot.mouseClick(capture.save_new_button, Qt.MouseButton.LeftButton)
-    assert capture.front_editor.toPlainText() == ""
+    qtbot.waitUntil(lambda: capture.front_editor.toPlainText() == "", timeout=WAIT_MS)
     qtbot.waitUntil(lambda: len(note_with_front(fake, "question with no answer")) == 1, timeout=WAIT_MS)
 
 
@@ -666,6 +666,82 @@ def test_errors_appear_under_their_side_without_moving_the_editors(qtbot: QtBot,
     qtbot.waitUntil(lambda: capture.back_field.message.text().startswith("Line 1:"), timeout=WAIT_MS)
     assert capture.front_field.message.text() == ""
     assert (capture.front_editor.height(), capture.back_editor.height()) == heights
+
+
+def test_save_and_new_keeps_a_card_that_does_not_compile(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    _, fake = fake_ankiconnect
+    capture = window.capture
+    type_card(window, "Real Analysis", "the front is fine", "#nosuchthing")
+    capture.new_card()
+    qtbot.waitUntil(lambda: capture.back_field.message.text().startswith("Line 1:"), timeout=WAIT_MS)
+    settle(window)
+    assert capture.front_editor.toPlainText() == "the front is fine"
+    assert capture.back_editor.hasFocus()
+    assert not fake.notes
+    capture.back_editor.setPlainText("now it compiles")
+    capture.new_card()
+    qtbot.waitUntil(lambda: capture.front_editor.toPlainText() == "", timeout=WAIT_MS)
+    qtbot.waitUntil(lambda: len(note_with_front(fake, "the front is fine")) == 1, timeout=WAIT_MS)
+
+
+def test_card_rejected_after_leaving_it_is_offered_back(
+    qtbot: QtBot,
+    window: MainWindow,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+) -> None:
+    _, fake = fake_ankiconnect
+    capture = window.capture
+    service.save(CardDraft("Real Analysis", "", (), "same front", "first back"))
+    assert window.rejected_button.isHidden()
+    type_card(window, "Real Analysis", "same front", "a different back")
+    qtbot.waitUntil(lambda: capture.last_render_ok, timeout=WAIT_MS)
+    capture.new_card()
+    assert capture.front_editor.toPlainText() == ""
+    qtbot.waitUntil(lambda: window.rejected_button.text() == "1 card not saved", timeout=WAIT_MS)
+    assert not window.rejected_button.isHidden()
+    qtbot.mouseClick(window.rejected_button, Qt.MouseButton.LeftButton)
+    assert capture.back_editor.toPlainText() == "a different back"
+    assert window.rejected_button.isHidden()
+    qtbot.waitUntil(lambda: capture.save_status_label.text().startswith("Not saved"), timeout=WAIT_MS)
+    capture.front_editor.setPlainText("a front of its own")
+    qtbot.waitUntil(lambda: len(note_with_front(fake, "a front of its own")) == 1, timeout=WAIT_MS)
+    settle(window)
+    assert window.rejected_drafts.count() == 0
+    assert len(fake.notes) == 2
+
+
+def test_rejected_cards_survive_a_restart(
+    qtbot: QtBot,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+    tmp_path: Path,
+) -> None:
+    gateway, _ = fake_ankiconnect
+    DraftFolder(tmp_path / "restart" / "rejected").put(
+        CardDraft("Real Analysis", "", (), "rejected before restart", "back")
+    )
+    restarted = build_window(service, gateway, tmp_path / "restart")
+    qtbot.addWidget(restarted)
+    restarted.capture.restore(None)
+    restarted.show()
+    qtbot.waitUntil(lambda: restarted.anki_connected, timeout=WAIT_MS)
+    assert restarted.rejected_button.text() == "1 card not saved"
+    settle(restarted)
+
+
+def test_offline_card_says_it_is_queued(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    gateway, _ = fake_ankiconnect
+    gateway.url = DEAD_URL
+    type_card(window, "Real Analysis", "written offline", "back")
+    qtbot.waitUntil(
+        lambda: window.capture.save_status_label.text() == "Queued until Anki is open", timeout=WAIT_MS
+    )
+    window.reconnect_timer.stop()
 
 
 def test_background_task_that_crashes_still_reports_back(qtbot: QtBot) -> None:
