@@ -2,6 +2,7 @@ import re
 from xml.sax.saxutils import escape
 
 TYPST_BLACK = re.compile(r'(fill|stroke)="#000000"')
+COLOR_WITH_ALPHA = re.compile(r'(fill|stroke)="(#[0-9a-fA-F]{6})([0-9a-fA-F]{2})"')
 
 
 def theme_colors(svg_text: str) -> str:
@@ -15,5 +16,12 @@ def postprocess_svg(svg_bytes: bytes, plain_text: str) -> str:
     return svg_text[:opening_tag_end] + description + svg_text[opening_tag_end:]
 
 
+def split_alpha(match: re.Match[str]) -> str:
+    attribute, color, alpha = match.groups()
+    return f'{attribute}="{color}" {attribute}-opacity="{int(alpha, 16) / 255:.3f}"'
+
+
 def svg_for_display(svg_text: str, color: str) -> str:
-    return svg_text.replace('"currentColor"', f'"{color}"')
+    themed = svg_text.replace('"currentColor"', f'"{color}"')
+    # Qt's SVG renderer paints #rrggbbaa colors solid black, so the alpha moves to its own attribute.
+    return COLOR_WITH_ALPHA.sub(split_alpha, themed)
