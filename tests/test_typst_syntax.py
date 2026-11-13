@@ -1,3 +1,7 @@
+import signal
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import pytest
 
 from typki.typst_syntax.catalog import Catalog, Entry, parse_variants, typst_catalog
@@ -16,9 +20,23 @@ from typki.typst_syntax.editing import (
     toggle_line_comment,
     type_character,
 )
-from typki.typst_syntax.lexer import Kind, Mode, lex
+from typki.typst_syntax.lexer import Kind, Mode, Token, lex
 
 HEADER = "#let RR = $bb(R)$\n#let defn(term, body) = [*#term.* #body]\n"
+
+
+@contextmanager
+def time_limit(seconds: int) -> Iterator[None]:
+    def fail(_signal: int, _frame: object) -> None:
+        raise TimeoutError(f"still running after {seconds}s")
+
+    previous = signal.signal(signal.SIGALRM, fail)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 def kinds_of(text: str) -> list[tuple[Kind, str]]:
@@ -65,6 +83,21 @@ def test_lexer_keeps_symbol_variants_together_and_ignores_snake_case() -> None:
 def test_lexer_survives_unterminated_input() -> None:
     for text in ("$x", "#f(", "#[abc", '#let s = "x', "/* open", "```py", "#"):
         lex(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["line one \\", "$a \\", "\\", "#let x = 1²", "#f(x²)", "#(.²)", "#let x = ²\n#f[a \\"],
+)
+def test_lexer_always_advances(text: str) -> None:
+    with time_limit(seconds=5):
+        lexed = lex(text)
+    assert all(0 <= token.start < token.end <= len(text) for token in lexed.tokens)
+
+
+def test_trailing_backslash_is_an_escape_once_a_character_follows() -> None:
+    assert kinds_of("a \\") == []
+    assert (Kind.ESCAPE, "\\\n") in kinds_of("a \\\nb")
 
 
 def test_catalog_lists_symbols_with_variants(catalog: Catalog) -> None:
@@ -201,4 +234,6 @@ def test_no_completion_inside_strings_comments_or_raw(catalog: Catalog) -> None:
 
 def test_deep_nesting_does_not_crash_the_lexer() -> None:
     text = "#f(" * 3000
-    assert lex(text).mode_at(len(text)) == Mode.MARKUP
+    lexed = lex(text)
+    assert lexed.mode_at(len(text)) == Mode.MARKUP
+    assert lexed.tokens[0] == Token(0, 1, Kind.FUNCTION)

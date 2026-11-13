@@ -117,6 +117,10 @@ class Lexer:
         self.position = match.end()
         return True
 
+    def escape(self) -> None:
+        if not self.emit_match(ESCAPE, Kind.ESCAPE):
+            self.position += 1  # a lone backslash at the very end of the text
+
     def at_line_start(self) -> bool:
         index = self.position - 1
         while index >= 0 and self.text[index] in " \t":
@@ -195,7 +199,7 @@ class Lexer:
             if self.comment():
                 continue
             if character == "\\":
-                self.emit_match(ESCAPE, Kind.ESCAPE)
+                self.escape()
                 continue
             if character == "$":
                 self.math()
@@ -273,7 +277,7 @@ class Lexer:
             if self.comment():
                 continue
             if character == "\\":
-                self.emit_match(ESCAPE, Kind.ESCAPE)
+                self.escape()
                 continue
             if character == '"':
                 self.string()
@@ -417,8 +421,7 @@ class Lexer:
             return
         if character == "<" and self.emit_match(LABEL, Kind.LABEL):
             return
-        if character.isdigit() or (character == "." and self.peek(1).isdigit()):
-            self.emit_match(NUMBER, Kind.NUMBER)
+        if self.emit_match(NUMBER, Kind.NUMBER):
             return
         identifier = CODE_IDENTIFIER.match(self.text, self.position)
         if identifier is not None:
@@ -439,7 +442,8 @@ class Lexer:
 
 @lru_cache(maxsize=8)
 def lex(text: str) -> Lexed:
+    lexer = Lexer(text)
     try:
-        return Lexer(text).run()
+        return lexer.run()
     except RecursionError:
-        return Lexed((), ())
+        return Lexed(tuple(lexer.tokens), tuple(lexer.regions))
