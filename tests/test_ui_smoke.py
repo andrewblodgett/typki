@@ -19,6 +19,7 @@ from typki.anki.fake_anki import FakeAnki
 from typki.card_service import CardService
 from typki.domain.card import CardDraft
 from typki.library.outbox import Outbox
+from typki.ui.background import TaskRunner
 from typki.ui.capture import CapturePage
 from typki.ui.editor import TypstEditor
 from typki.ui.main_window import MainWindow
@@ -665,3 +666,17 @@ def test_errors_appear_under_their_side_without_moving_the_editors(qtbot: QtBot,
     qtbot.waitUntil(lambda: capture.back_field.message.text().startswith("Line 1:"), timeout=WAIT_MS)
     assert capture.front_field.message.text() == ""
     assert (capture.front_editor.height(), capture.back_editor.height()) == heights
+
+
+def test_background_task_that_crashes_still_reports_back(qtbot: QtBot) -> None:
+    class Panic(BaseException):
+        pass
+
+    def crash() -> None:
+        raise Panic("compiler blew up")
+
+    errors: list[Exception] = []
+    runner = TaskRunner(1, errors.append)
+    runner.run(crash, lambda _result: None)
+    qtbot.waitUntil(lambda: bool(errors), timeout=WAIT_MS)
+    assert "compiler blew up" in str(errors[0])

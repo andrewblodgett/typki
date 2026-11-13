@@ -20,6 +20,8 @@ class _Task(QRunnable):
             outcome: tuple[bool, object] = (True, self.function())
         except Exception as error:
             outcome = (False, error)
+        except BaseException as crash:  # a Rust panic inside Typst is not an Exception
+            outcome = (False, RuntimeError(f"{type(crash).__name__}: {crash}"))
         try:
             self.runner.finished.emit(self.task_id, *outcome)
         except RuntimeError:
