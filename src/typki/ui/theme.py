@@ -511,7 +511,7 @@ QListWidget#cards::item:selected {{
 }}
 QLabel#caption {{ color: {theme.muted}; font-weight: 600; padding-left: 2px; }}
 QLabel#message {{ color: {theme.muted}; padding: 0 2px; }}
-QLabel#save-status {{ color: {theme.muted}; padding: 0 8px; }}
+QLabel#save-status, QLabel#summary {{ color: {theme.muted}; padding: 0 8px; }}
 QLabel#message[level="error"], QLabel#save-status[level="error"] {{ color: {theme.error}; }}
 QLabel#message[level="warning"] {{ color: {theme.warning}; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 4px 2px; }}
@@ -533,6 +533,7 @@ QPushButton#primary {{
 QPushButton#primary:hover {{ background: {theme.text}; }}
 QPushButton:flat {{ background: transparent; color: {theme.muted}; padding: 7px 0; }}
 QPushButton:flat:hover {{ color: {theme.text}; }}
+QPushButton#rejected {{ color: {theme.error}; padding: 2px 12px 6px 12px; }}
 QToolButton {{
   background: transparent; color: {theme.muted}; border: none; border-radius: 8px; padding: 5px 10px;
 }}

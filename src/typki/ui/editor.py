@@ -1,4 +1,4 @@
-import zlib
+from bisect import bisect_right
 from collections.abc import Callable
 from functools import partial
 
@@ -34,7 +34,8 @@ from typki.typst_syntax import editing
 from typki.typst_syntax.catalog import typst_catalog
 from typki.typst_syntax.completion import CompletionResult, complete
 from typki.typst_syntax.editing import Edit
-from typki.typst_syntax.lexer import SPAN_KINDS, Kind, lex
+from typki.typst_syntax.highlight import StyledRange, styled_ranges
+from typki.typst_syntax.lexer import Kind, lex
 from typki.ui.text_positions import TextPositions
 from typki.ui.theme import DEFAULT_THEME, Theme, code_font
 
@@ -104,7 +105,7 @@ def placeholder_format_for(theme: Theme) -> QTextCharFormat:
     return text_format
 
 
-Span = tuple[int, int, QTextCharFormat]
+BlockSpan = tuple[int, int, QTextCharFormat]
 LineCommand = Callable[[str, int, int], Edit | None]
 LINE_COMMANDS: dict[str, LineCommand] = {
     "Ctrl+/": editing.toggle_line_comment,
@@ -119,60 +120,81 @@ LINE_COMMANDS: dict[str, LineCommand] = {
 
 
 class TypstHighlighter(QSyntaxHighlighter):
-    def __init__(self, document: QTextDocument) -> None:
-        super().__init__(document)
-        self.cached_text: str | None = None
-        self.cached_positions = TextPositions("")
-        self.cached_spans: list[Span] = []
+    def __init__(self, document: QTextDocument, parent: QObject) -> None:
+        super().__init__(parent)
+        self.spans_are_current = False
+        self.spans_by_block: list[list[BlockSpan]] = []
+        self.revision = 0
+        # Qt runs slots in connection order, so connecting before setDocument drops the stale spans
+        # before the base class restyles the edited blocks.
+        document.contentsChange.connect(self.forget_spans)
+        self.setDocument(document)
         self.set_theme(DEFAULT_THEME)
 
     def set_theme(self, theme: Theme) -> None:
         self.kind_formats = kind_formats_for(theme)
         self.placeholder_format = placeholder_format_for(theme)
-        self.cached_text = None
+        self.merged_formats: dict[tuple[Kind, frozenset[Kind]], QTextCharFormat] = {}
+        self.spans_are_current = False
         self.rehighlight()
 
-    def document_spans(self) -> list[Span]:
+    def forget_spans(self, _position: int = 0, _removed: int = 0, _added: int = 0) -> None:
+        self.spans_are_current = False
+
+    def format_for(self, styled: StyledRange) -> QTextCharFormat:
+        key = (styled.kind, styled.enclosing)
+        if key not in self.merged_formats:
+            text_format = QTextCharFormat(self.kind_formats[styled.kind])
+            for span_kind in styled.enclosing:
+                text_format.merge(self.kind_formats[span_kind])
+            text_format.merge(self.kind_formats[styled.kind])
+            self.merged_formats[key] = text_format
+        return self.merged_formats[key]
+
+    def block_bounds(self) -> tuple[list[int], list[int]]:
+        starts: list[int] = []
+        ends: list[int] = []
+        block = self.document().begin()
+        while block.isValid():
+            starts.append(block.position())
+            ends.append(block.position() + max(block.length() - 1, 0))
+            block = block.next()
+        return starts, ends
+
+    def lex_document(self) -> None:
+        if self.spans_are_current:
+            return
         text = self.document().toPlainText()
-        if text == self.cached_text:
-            return self.cached_spans
         positions = TextPositions(text)
-        tokens = lex(text).tokens
-        span_tokens = [token for token in tokens if token.kind in SPAN_KINDS]
-        spans: list[Span] = [
-            (positions.to_qt(token.start), positions.to_qt(token.end), self.kind_formats[token.kind])
-            for token in span_tokens
-        ]
-        for token in tokens:
-            if token.kind in SPAN_KINDS:
-                continue
-            token_format = QTextCharFormat(self.kind_formats[token.kind])
-            for span in span_tokens:
-                if span.start <= token.start < span.end:
-                    token_format.merge(self.kind_formats[span.kind])
-                    token_format.merge(self.kind_formats[token.kind])
-            spans.append((positions.to_qt(token.start), positions.to_qt(token.end), token_format))
-        self.cached_text = text
-        self.cached_positions = positions
-        self.cached_spans = spans
-        return spans
+        block_starts, block_ends = self.block_bounds()
+        spans_by_block: list[list[BlockSpan]] = [[] for _ in block_starts]
+        for styled in styled_ranges(lex(text).tokens):
+            start, end = positions.to_qt(styled.start), positions.to_qt(styled.end)
+            text_format = self.format_for(styled)
+            number = max(bisect_right(block_starts, start) - 1, 0)
+            while number < len(block_starts) and block_starts[number] < end:
+                clipped_start = max(start, block_starts[number])
+                clipped_end = min(end, block_ends[number])
+                if clipped_end > clipped_start:
+                    offset = clipped_start - block_starts[number]
+                    spans_by_block[number].append((offset, clipped_end - clipped_start, text_format))
+                number += 1
+        self.spans_are_current = True
+        self.spans_by_block = spans_by_block
+        self.revision += 1
 
     def highlightBlock(self, text: str) -> None:
-        spans = self.document_spans()
-        block = self.currentBlock()
-        block_start = block.position()
-        block_end = block_start + max(block.length() - 1, 0)
-        for start, end, token_format in spans:
-            if end <= block_start or start >= block_end:
-                continue
-            clipped_start = max(start, block_start)
-            self.setFormat(clipped_start - block_start, min(end, block_end) - clipped_start, token_format)
+        self.lex_document()
+        number = self.currentBlock().blockNumber()
+        if number < len(self.spans_by_block):
+            for offset, length, text_format in self.spans_by_block[number]:
+                self.setFormat(offset, length, text_format)
         block_positions = TextPositions(text)
         for match in PLACEHOLDER_PATTERN.finditer(text):
             start = block_positions.to_qt(match.start())
             self.setFormat(start, block_positions.to_qt(match.end()) - start, self.placeholder_format)
-        prefix = (self.cached_text or "")[: self.cached_positions.from_qt(block_end)]
-        self.setCurrentBlockState(zlib.crc32(prefix.encode()) & 0x3FFFFFFF)
+        # An edit can restyle everything after it, so a changed state makes Qt redo the following blocks.
+        self.setCurrentBlockState(self.revision)
 
 
 class CompletionDelegate(QStyledItemDelegate):
@@ -259,7 +281,7 @@ class TypstEditor(QPlainTextEdit):
         self.setFrameShape(QPlainTextEdit.Shape.NoFrame)
         self.setTabChangesFocus(False)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-        self.highlighter = TypstHighlighter(self.document())
+        self.highlighter = TypstHighlighter(self.document(), self)
         self.reserved_shortcuts: set[QKeySequence] = set()
         self.theme = DEFAULT_THEME
         self.definitions_source: Callable[[], str] = self.toPlainText

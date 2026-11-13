@@ -28,6 +28,10 @@ class NotTypkiNoteError(AnkiError):
     pass
 
 
+class NoteMissingError(AnkiError):
+    pass
+
+
 @dataclass(frozen=True)
 class CardRender:
     front: SideRender
@@ -60,6 +64,11 @@ class SearchResult:
 
 def note_type_query() -> str:
     return quoted_term("note", NOTE_TYPE_NAME)
+
+
+def typki_notes_matching(user_query: str) -> str:
+    # Without the parentheses, "a or b" would also match notes of other types that contain b.
+    return f"{note_type_query()} ({user_query})" if user_query.strip() else note_type_query()
 
 
 def to_stored_card(record: NoteRecord) -> StoredCard:
@@ -143,10 +152,10 @@ class CardService:
         if not card_render.ok:
             raise RenderFailedError(card_render)
         fields = self.rendered_fields(draft, card_render)
-        existing_note_id = draft.note_id or self.find_by_source_id(draft.source_id)
-        if existing_note_id is not None:
-            self.update_existing(existing_note_id, draft, fields)
-            return SaveResult(note_id=existing_note_id, created=False)
+        record = self.existing_record(draft)
+        if record is not None:
+            self.update_existing(record, draft, fields)
+            return SaveResult(note_id=record.note_id, created=False)
         self.gateway.create_deck(draft.deck_name)
         note_id = self.gateway.add_note(
             NewNote(
@@ -176,8 +185,17 @@ class CardService:
         )
         return matches[0] if matches else None
 
-    def update_existing(self, note_id: int, draft: CardDraft, fields: dict[str, str]) -> None:
-        record = self.require_typki_record(note_id)
+    def existing_record(self, draft: CardDraft) -> NoteRecord | None:
+        if draft.note_id is not None:
+            try:
+                return self.require_typki_record(draft.note_id)
+            except NoteMissingError:
+                pass  # deleted in Anki since it was opened, so it is saved as a new note
+        note_id = self.find_by_source_id(draft.source_id)
+        return self.require_typki_record(note_id) if note_id is not None else None
+
+    def update_existing(self, record: NoteRecord, draft: CardDraft, fields: dict[str, str]) -> None:
+        note_id = record.note_id
         stored_source_id = record.fields.get(note_type.SOURCE_ID, "")
         if stored_source_id:
             fields = {**fields, note_type.SOURCE_ID: stored_source_id}
@@ -196,7 +214,7 @@ class CardService:
     def require_typki_record(self, note_id: int) -> NoteRecord:
         records = self.gateway.notes_info([note_id])
         if not records:
-            raise AnkiError(f"Note {note_id} no longer exists in Anki.")
+            raise NoteMissingError(f"Note {note_id} no longer exists in Anki.")
         record = records[0]
         if record.model_name != NOTE_TYPE_NAME:
             raise NotTypkiNoteError(f"Note {note_id} was not created by Typki and is read-only.")
@@ -210,7 +228,7 @@ class CardService:
             self.gateway.delete_notes([note_id])
 
     def search(self, query: str, offset: int = 0, limit: int = DEFAULT_SEARCH_LIMIT) -> SearchResult:
-        note_ids = sorted(self.gateway.find_notes(f"{note_type_query()} {query}".strip()), reverse=True)
+        note_ids = sorted(self.gateway.find_notes(typki_notes_matching(query)), reverse=True)
         records = self.gateway.notes_info(note_ids[offset : offset + limit])
         preamble = self.library.preamble()
         summaries = tuple(

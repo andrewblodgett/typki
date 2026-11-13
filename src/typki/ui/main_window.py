@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMenu,
+    QPushButton,
     QStackedWidget,
     QTabWidget,
     QToolButton,
@@ -16,10 +17,10 @@ from PySide6.QtWidgets import (
 )
 
 from typki.anki.gateway import AnkiConnectTooOldError, AnkiGateway, AnkiUnavailableError
-from typki.card_service import CardService
-from typki.domain.card import StoredCard
+from typki.card_service import CardService, SaveResult
+from typki.domain.card import CardDraft, StoredCard
+from typki.library.draft_folder import DraftFolder
 from typki.library.drafts import DraftStore
-from typki.library.outbox import Outbox
 from typki.rerender.runner import Rerenderer
 from typki.ui.background import TaskRunner, debouncer
 from typki.ui.background_rerender import BackgroundRerender
@@ -43,6 +44,7 @@ ANKI_THREADS = 2
 RENDER_THREADS = 1
 DRAFT_FILENAME = "draft.json"
 OUTBOX_DIRNAME = "outbox"
+REJECTED_DIRNAME = "rejected"
 VIEW_ACTION_KEYS = {"show_capture", "show_browse", "show_global", "search", "toggle_phone"}
 
 
@@ -82,8 +84,9 @@ class MainWindow(QMainWindow):
         self.anki_runner = anki_runner = TaskRunner(ANKI_THREADS, self.show_notice_for_error, self)
         self.render_runner = render_runner = TaskRunner(RENDER_THREADS, self.show_notice_for_error, self)
         self.save_queue = save_queue = SaveQueue(
-            service, anki_runner, Outbox(state_dir / OUTBOX_DIRNAME), self
+            service, anki_runner, DraftFolder(state_dir / OUTBOX_DIRNAME), self
         )
+        self.rejected_drafts = DraftFolder(state_dir / REJECTED_DIRNAME)
         self.draft_store = DraftStore(state_dir / DRAFT_FILENAME)
         self.capture = capture = CapturePage(service, render_runner, save_queue, self.draft_store)
         self.browser = browser = BrowserPage(service, anki_runner)
@@ -109,7 +112,13 @@ class MainWindow(QMainWindow):
         self.previous_tab = CAPTURE_TAB
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
+        self.rejected_button = QPushButton()
+        self.rejected_button.setObjectName("rejected")
+        self.rejected_button.setFlat(True)
+        self.rejected_button.setToolTip("Reopen the card to see why Anki did not take it")
+        self.rejected_button.clicked.connect(self.reopen_rejected)
         self.indicator = QLabel()
+        self.statusBar().addPermanentWidget(self.rejected_button)
         self.statusBar().addPermanentWidget(self.indicator)
         self.statusBar().setSizeGripEnabled(False)
 
@@ -120,9 +129,12 @@ class MainWindow(QMainWindow):
         self.watcher.changed.connect(self.on_library_changed)
         save_queue.state_changed.connect(self.update_indicator)
         save_queue.went_offline.connect(self.on_went_offline)
+        save_queue.rejected.connect(self.on_save_rejected)
+        save_queue.saved.connect(self.on_card_saved)
         self.rerender.state_changed.connect(self.update_indicator)
         browser.open_requested.connect(self.open_note)
         browser.delete_requested.connect(self.delete_note)
+        browser.anki_unreachable.connect(self.on_went_offline)
         self.install_actions(shortcuts)
         self.apply_theme(theme)
 
@@ -204,7 +216,7 @@ class MainWindow(QMainWindow):
         self.global_page.set_theme(theme)
         self.setup_page.set_theme(theme)
         if self.browser.results.count():
-            self.browser.refresh()
+            self.browser.reload()
 
     def on_tab_changed(self, index: int) -> None:
         if self.previous_tab == GLOBAL_TAB and index != GLOBAL_TAB:
@@ -214,7 +226,7 @@ class MainWindow(QMainWindow):
         self.previous_tab = index
         if index == BROWSE_TAB:
             self.capture.flush()
-            self.browser.refresh()
+            self.browser.reload()
         if index == GLOBAL_TAB:
             self.global_page.set_sample(
                 self.capture.front_editor.toPlainText(), self.capture.back_editor.toPlainText()
@@ -263,6 +275,9 @@ class MainWindow(QMainWindow):
         self.update_indicator()
 
     def update_indicator(self) -> None:
+        rejected = 0 if self.setup_visible else self.rejected_drafts.count()
+        self.rejected_button.setVisible(rejected > 0)
+        self.rejected_button.setText("1 card not saved" if rejected == 1 else f"{rejected} cards not saved")
         if self.setup_visible:
             self.indicator.setText("")
             return
@@ -296,7 +311,7 @@ class MainWindow(QMainWindow):
         self.save_queue.go_online()
         self.rerender.request()
         if self.tabs.currentIndex() == BROWSE_TAB:
-            self.browser.refresh()
+            self.browser.reload()
         self.update_indicator()
 
     def on_anki_unavailable(self, error: Exception) -> None:
@@ -318,6 +333,29 @@ class MainWindow(QMainWindow):
         self.reconnect_timer.start(RECONNECT_INTERVAL_MS)
         self.update_indicator()
 
+    def on_save_rejected(self, draft: CardDraft) -> None:
+        if draft.source_id != self.capture.source_id:
+            self.rejected_drafts.put(draft)
+        self.update_indicator()
+
+    def on_card_saved(self, source_id: str, _result: SaveResult) -> None:
+        self.rejected_drafts.remove(source_id)
+        if self.tabs.currentIndex() == BROWSE_TAB:
+            self.browser.reload()
+        self.update_indicator()
+
+    def reopen_rejected(self) -> None:
+        drafts = self.rejected_drafts.drafts()
+        if not drafts:
+            return
+        draft = drafts[0]
+        self.tabs.setCurrentIndex(CAPTURE_TAB)
+        self.capture.reopen_unsaved(draft, on_shown=lambda: self.forget_rejected(draft))
+
+    def forget_rejected(self, draft: CardDraft) -> None:
+        self.rejected_drafts.remove(draft.source_id)
+        self.update_indicator()
+
     def open_note(self, note_id: int) -> None:
         self.anki_runner.run(lambda: self.service.open(note_id), self.on_note_opened)
 
@@ -334,6 +372,7 @@ class MainWindow(QMainWindow):
         self.show_notice("Deleted")
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self.hide()  # waiting on a slow Anki below should not leave a frozen window on screen
         self.capture.flush()
         self.capture.save_draft()
         self.global_page.flush_writes()

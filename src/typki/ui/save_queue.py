@@ -3,10 +3,11 @@ from PySide6.QtCore import QObject, Signal
 from typki.anki.gateway import AnkiUnavailableError, DuplicateNoteError
 from typki.card_service import CardService, RenderFailedError, SaveResult
 from typki.domain.card import CardDraft
-from typki.library.outbox import Outbox
+from typki.library.draft_folder import DraftFolder
 from typki.ui.background import TaskRunner
 
 SAVED = "Saved"
+QUEUED = "Queued until Anki is open"
 NOT_SAVED = "Not saved"
 NOT_SAVED_COMPILE = f"{NOT_SAVED}: compile error"
 NOT_SAVED_DUPLICATE = f"{NOT_SAVED}: duplicate front"
@@ -15,10 +16,11 @@ NOT_SAVED_DUPLICATE = f"{NOT_SAVED}: duplicate front"
 class SaveQueue(QObject):
     state_changed = Signal()
     saved = Signal(object, object)
+    rejected = Signal(object)
     went_offline = Signal()
 
     def __init__(
-        self, service: CardService, runner: TaskRunner, outbox: Outbox, parent: QObject | None = None
+        self, service: CardService, runner: TaskRunner, outbox: DraftFolder, parent: QObject | None = None
     ) -> None:
         super().__init__(parent)
         self.service = service
@@ -44,13 +46,17 @@ class SaveQueue(QObject):
 
     def enqueue(self, draft: CardDraft) -> None:
         if self.offline:
-            self.outbox.put(draft)
+            self.keep_for_later(draft)
             self.state_changed.emit()
             return
         self.pending = [queued for queued in self.pending if queued.source_id != draft.source_id]
         self.pending.append(draft)
         self.state_changed.emit()
         self.process()
+
+    def keep_for_later(self, draft: CardDraft) -> None:
+        self.outbox.put(draft)
+        self.status_by_source[draft.source_id] = QUEUED
 
     def go_online(self) -> None:
         self.offline = False
@@ -84,7 +90,7 @@ class SaveQueue(QObject):
         if isinstance(error, AnkiUnavailableError):
             self.offline = True
             for queued in [draft, *self.pending]:
-                self.outbox.put(queued)
+                self.keep_for_later(queued)
             self.pending.clear()
             self.went_offline.emit()
             self.state_changed.emit()
@@ -96,5 +102,6 @@ class SaveQueue(QObject):
             self.status_by_source[draft.source_id] = NOT_SAVED_DUPLICATE
         else:
             self.status_by_source[draft.source_id] = f"{NOT_SAVED}: {error}"
+        self.rejected.emit(draft)
         self.state_changed.emit()
         self.process()

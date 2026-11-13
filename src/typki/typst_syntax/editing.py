@@ -183,7 +183,8 @@ def move_lines(text: str, start: int, end: int, upward: bool) -> Edit | None:
     neighbor_end = line_end(text, last + 1)
     neighbor = text[last + 1 : neighbor_end]
     shift = len(neighbor) + 1
-    return Edit(first, neighbor_end, neighbor + "\n" + block, start + shift, end + shift)
+    moved_end = min(end + shift, len(text))
+    return Edit(first, neighbor_end, neighbor + "\n" + block, start + shift, moved_end)
 
 
 def duplicate_lines(text: str, start: int, end: int, upward: bool) -> Edit:

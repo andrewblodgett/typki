@@ -134,6 +134,38 @@ def test_delete_removes_note(
     assert note_id not in fake.notes
 
 
+def test_card_deleted_in_anki_is_saved_as_a_new_note(
+    service: CardService, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    _, fake = fake_ankiconnect
+    draft = make_draft()
+    deleted_id = service.save(draft).note_id
+    fake.notes.clear()
+    edited = CardDraft(DECK, "", (), "edited front", "edited back", draft.source_id, deleted_id)
+    result = service.save(edited)
+    assert result.created and result.note_id != deleted_id
+    assert fake.notes[result.note_id].fields[note_type.FRONT_SOURCE] == "edited front"
+
+
+def test_search_with_or_never_reaches_other_note_types(
+    service: CardService, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    gateway, fake = fake_ankiconnect
+    gateway.create_model(
+        "Basic", ["Front", "Back"], "", [{"Name": "Card 1", "Front": "{{Front}}", "Back": "{{Back}}"}]
+    )
+    fake.handle(
+        "addNote",
+        {"note": {"deckName": "Default", "modelName": "Basic", "fields": {"Front": "zeta", "Back": "a"}}},
+    )
+    service.save(make_draft(front="alpha"))
+    service.save(make_draft(front="beta"))
+    result = service.search("alpha or zeta")
+    assert [summary.card.front_source for summary in result.cards] == ["alpha"]
+    assert service.search("alpha or beta").total == 2
+    assert service.search("").total == 2
+
+
 def test_open_rejects_foreign_notes(
     service: CardService, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
 ) -> None:

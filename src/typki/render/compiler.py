@@ -79,6 +79,10 @@ class Renderer:
                 self.library_root,
             )
             return SideRender(svg=None, diagnostics=tuple(diagnostics), plain_text=plain_text)
+        except BaseException:
+            with self._lock:
+                self._compiler = None  # a compiler that crashed is not trusted with the next card
+            raise
         warning_diagnostics = [
             diagnostic
             for warning in warnings

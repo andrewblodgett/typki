@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
 
 from conftest import replace_defn
 from PySide6.QtCore import Qt
@@ -18,7 +17,9 @@ from typki.anki.ankiconnect import AnkiConnectGateway
 from typki.anki.fake_anki import FakeAnki
 from typki.card_service import CardService
 from typki.domain.card import CardDraft
-from typki.library.outbox import Outbox
+from typki.library.draft_folder import DraftFolder
+from typki.ui.background import TaskRunner
+from typki.ui.browser import BrowserPage
 from typki.ui.capture import CapturePage
 from typki.ui.editor import TypstEditor
 from typki.ui.main_window import MainWindow
@@ -42,6 +43,11 @@ def settle(window: MainWindow) -> None:
         window.anki_runner.wait()
         window.render_runner.wait()
         QApplication.processEvents()
+
+
+@pytest.fixture(autouse=True)
+def confirm_deletes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(BrowserPage, "confirm_delete", lambda _page: True)
 
 
 @pytest.fixture
@@ -225,8 +231,12 @@ def test_browse_lists_newest_first_and_filters_as_you_type(
     browser = window.browser
     qtbot.waitUntil(lambda: browser.results.count() == 3, timeout=WAIT_MS)
     assert browser.results.item(0).data(Qt.ItemDataRole.UserRole) == max(fake.notes)
+    assert browser.summary.text() == "3 cards"
     qtbot.keyClicks(browser.search_edit, "beta")
     qtbot.waitUntil(lambda: browser.results.count() == 1, timeout=WAIT_MS)
+    assert browser.summary.text() == "1 card"
+    qtbot.keyClicks(browser.search_edit, " nothinglikethis")
+    qtbot.waitUntil(lambda: browser.summary.text() == "No cards match", timeout=WAIT_MS)
 
 
 def test_browse_loads_more_on_scroll(qtbot: QtBot, window: MainWindow, service: CardService) -> None:
@@ -365,7 +375,7 @@ def test_outbox_survives_restart(
     tmp_path: Path,
 ) -> None:
     gateway, fake = fake_ankiconnect
-    Outbox(tmp_path / "restart" / "outbox").put(
+    DraftFolder(tmp_path / "restart" / "outbox").put(
         CardDraft("Real Analysis", "", (), "queued before restart", "")
     )
     restarted = build_window(service, gateway, tmp_path / "restart")
@@ -576,6 +586,33 @@ def test_matching_bracket_is_highlighted(editor: TypstEditor) -> None:
     assert [selection.cursor.selectionStart() for selection in editor.bracket_selections] == [2, 4]
 
 
+def foreground_at(editor: TypstEditor, line: int, column: int) -> str | None:
+    block = editor.document().findBlockByNumber(line)
+    for format_range in block.layout().formats():
+        if format_range.start <= column < format_range.start + format_range.length:
+            return format_range.format.foreground().color().name()
+    return None
+
+
+def test_highlighting_restyles_the_lines_after_an_edit(editor: TypstEditor) -> None:
+    theme = editor.theme
+    editor.setPlainText("plain\n\n$x$ 😀 #f()\nlast $y$")
+    assert foreground_at(editor, 0, 0) is None
+    assert foreground_at(editor, 2, 1) == theme.math
+    assert foreground_at(editor, 2, 8) == theme.function
+    assert foreground_at(editor, 3, 6) == theme.math
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    cursor.insertText("/*")
+    assert [foreground_at(editor, line, 1) for line in (0, 2, 3)] == [theme.comment] * 3
+    cursor.deletePreviousChar()
+    cursor.deletePreviousChar()
+    assert foreground_at(editor, 2, 1) == theme.math
+    assert foreground_at(editor, 3, 0) is None
+    editor.set_theme(find_theme("Solarized Light"))
+    assert foreground_at(editor, 2, 1) == editor.theme.math != theme.math
+
+
 def test_editing_after_astral_characters_keeps_text_intact(qtbot: QtBot, editor: TypstEditor) -> None:
     editor.setPlainText("𝒜 😀 first\nsecond\nthird")
     cursor = editor.textCursor()
@@ -612,7 +649,7 @@ def test_card_without_back_is_kept_and_never_saved(
     assert capture.back_editor.hasFocus()
     capture.back_editor.setPlainText("the answer")
     qtbot.mouseClick(capture.save_new_button, Qt.MouseButton.LeftButton)
-    assert capture.front_editor.toPlainText() == ""
+    qtbot.waitUntil(lambda: capture.front_editor.toPlainText() == "", timeout=WAIT_MS)
     qtbot.waitUntil(lambda: len(note_with_front(fake, "question with no answer")) == 1, timeout=WAIT_MS)
 
 
@@ -638,3 +675,198 @@ def test_errors_appear_under_their_side_without_moving_the_editors(qtbot: QtBot,
     qtbot.waitUntil(lambda: capture.back_field.message.text().startswith("Line 1:"), timeout=WAIT_MS)
     assert capture.front_field.message.text() == ""
     assert (capture.front_editor.height(), capture.back_editor.height()) == heights
+
+
+def test_save_and_new_keeps_a_card_that_does_not_compile(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    _, fake = fake_ankiconnect
+    capture = window.capture
+    type_card(window, "Real Analysis", "the front is fine", "#nosuchthing")
+    capture.new_card()
+    qtbot.waitUntil(lambda: capture.back_field.message.text().startswith("Line 1:"), timeout=WAIT_MS)
+    settle(window)
+    assert capture.front_editor.toPlainText() == "the front is fine"
+    assert capture.back_editor.hasFocus()
+    assert not fake.notes
+    capture.back_editor.setPlainText("now it compiles")
+    capture.new_card()
+    qtbot.waitUntil(lambda: capture.front_editor.toPlainText() == "", timeout=WAIT_MS)
+    qtbot.waitUntil(lambda: len(note_with_front(fake, "the front is fine")) == 1, timeout=WAIT_MS)
+
+
+def test_card_rejected_after_leaving_it_is_offered_back(
+    qtbot: QtBot,
+    window: MainWindow,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+) -> None:
+    _, fake = fake_ankiconnect
+    capture = window.capture
+    service.save(CardDraft("Real Analysis", "", (), "same front", "first back"))
+    assert window.rejected_button.isHidden()
+    type_card(window, "Real Analysis", "same front", "a different back")
+    qtbot.waitUntil(lambda: capture.last_render_ok, timeout=WAIT_MS)
+    capture.new_card()
+    assert capture.front_editor.toPlainText() == ""
+    qtbot.waitUntil(lambda: window.rejected_button.text() == "1 card not saved", timeout=WAIT_MS)
+    assert not window.rejected_button.isHidden()
+    qtbot.mouseClick(window.rejected_button, Qt.MouseButton.LeftButton)
+    assert capture.back_editor.toPlainText() == "a different back"
+    assert window.rejected_button.isHidden()
+    qtbot.waitUntil(lambda: capture.save_status_label.text().startswith("Not saved"), timeout=WAIT_MS)
+    capture.front_editor.setPlainText("a front of its own")
+    qtbot.waitUntil(lambda: len(note_with_front(fake, "a front of its own")) == 1, timeout=WAIT_MS)
+    settle(window)
+    assert window.rejected_drafts.count() == 0
+    assert len(fake.notes) == 2
+
+
+def test_rejected_cards_survive_a_restart(
+    qtbot: QtBot,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+    tmp_path: Path,
+) -> None:
+    gateway, _ = fake_ankiconnect
+    DraftFolder(tmp_path / "restart" / "rejected").put(
+        CardDraft("Real Analysis", "", (), "rejected before restart", "back")
+    )
+    restarted = build_window(service, gateway, tmp_path / "restart")
+    qtbot.addWidget(restarted)
+    restarted.capture.restore(None)
+    restarted.show()
+    qtbot.waitUntil(lambda: restarted.anki_connected, timeout=WAIT_MS)
+    assert restarted.rejected_button.text() == "1 card not saved"
+    settle(restarted)
+
+
+def test_offline_card_says_it_is_queued(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    gateway, _ = fake_ankiconnect
+    gateway.url = DEAD_URL
+    type_card(window, "Real Analysis", "written offline", "back")
+    qtbot.waitUntil(
+        lambda: window.capture.save_status_label.text() == "Queued until Anki is open", timeout=WAIT_MS
+    )
+    window.reconnect_timer.stop()
+
+
+def test_browse_shows_a_card_edited_just_before_switching(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    capture, browser = window.capture, window.browser
+    type_card(window, "Real Analysis", "brand new card", "answer")
+    qtbot.waitUntil(lambda: capture.last_render_ok, timeout=WAIT_MS)
+    window.tabs.setCurrentIndex(1)
+    qtbot.waitUntil(lambda: browser.results.count() == 1, timeout=WAIT_MS)
+    window.tabs.setCurrentIndex(0)
+    capture.tags_edit.setText("fresh-tag")
+    window.tabs.setCurrentIndex(1)
+    qtbot.waitUntil(lambda: "fresh-tag" in browser.results.item(0).text(), timeout=WAIT_MS)
+
+
+def test_browse_reload_stays_on_the_selected_card(
+    qtbot: QtBot, window: MainWindow, service: CardService
+) -> None:
+    service.save(CardDraft("Real Analysis", "", (), "zebra", ""))
+    note_ids = [
+        service.save(CardDraft("Real Analysis", "", (), f"card {index}", "")).note_id for index in range(44)
+    ]
+    browser = window.browser
+    window.tabs.setCurrentIndex(1)
+    qtbot.waitUntil(lambda: browser.results.count() == 40, timeout=WAIT_MS)
+    browser.results.verticalScrollBar().setValue(browser.results.verticalScrollBar().maximum())
+    qtbot.waitUntil(lambda: browser.results.count() == 45, timeout=WAIT_MS)
+    select_card(window, note_ids[1])
+    window.tabs.setCurrentIndex(0)
+    window.tabs.setCurrentIndex(1)
+    settle(window)
+    assert browser.results.count() == 45
+    assert browser.current_note_id() == note_ids[1]
+    browser.search_edit.setText("zebra")
+    qtbot.waitUntil(lambda: browser.results.count() == 1, timeout=WAIT_MS)
+    assert browser.results.currentRow() == 0
+
+
+def test_declining_the_delete_prompt_keeps_the_card(
+    qtbot: QtBot,
+    window: MainWindow,
+    service: CardService,
+    fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, fake = fake_ankiconnect
+    kept = service.save(CardDraft("Real Analysis", "", (), "keep me", "")).note_id
+    window.tabs.setCurrentIndex(1)
+    qtbot.waitUntil(lambda: window.browser.results.count() == 1, timeout=WAIT_MS)
+    select_card(window, kept)
+    monkeypatch.setattr(BrowserPage, "confirm_delete", lambda _page: False)
+    qtbot.keyClick(window.browser.results, Qt.Key.Key_Backspace)
+    settle(window)
+    assert kept in fake.notes
+    assert window.browser.results.count() == 1
+
+
+def test_browse_notices_when_anki_goes_away(
+    qtbot: QtBot, window: MainWindow, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    gateway, _ = fake_ankiconnect
+    gateway.url = DEAD_URL
+    window.tabs.setCurrentIndex(1)
+    qtbot.waitUntil(lambda: window.indicator.text().startswith("Offline"), timeout=WAIT_MS)
+    assert window.browser.summary.text() == "Anki is not running"
+    window.reconnect_timer.stop()
+
+
+def test_background_task_that_crashes_still_reports_back(qtbot: QtBot) -> None:
+    class Panic(BaseException):
+        pass
+
+    def crash() -> None:
+        raise Panic("compiler blew up")
+
+    errors: list[Exception] = []
+    runner = TaskRunner(1, errors.append)
+    runner.run(crash, lambda _result: None)
+    qtbot.waitUntil(lambda: bool(errors), timeout=WAIT_MS)
+    assert "compiler blew up" in str(errors[0])
+
+
+def test_preview_draws_the_card_and_dims_a_side_that_stops_compiling(
+    qtbot: QtBot, window: MainWindow
+) -> None:
+    capture = window.capture
+    canvas = capture.preview.canvas
+    front, back = canvas.sides["front"], canvas.sides["back"]
+    type_card(window, "Real Analysis", "the front", "$ x^2 $")
+    qtbot.waitUntil(lambda: capture.last_render_ok, timeout=WAIT_MS)
+    assert front.renderer is not None and back.renderer is not None
+    frame = canvas.frame_rect().toRect()
+    image = canvas.grab().toImage()
+    colors = {
+        image.pixelColor(x, y).name() for x in range(frame.left(), frame.right()) for y in range(30, 50)
+    }
+    assert image.pixelColor(frame.left() + 12, frame.top() + 12).name() == canvas.theme.panel
+    assert image.pixelColor(1, frame.bottom() + 8).name() == canvas.theme.chrome
+    assert colors - {canvas.theme.panel}, "the front should leave ink inside the frame"
+    capture.back_editor.setPlainText("#nosuchthing")
+    qtbot.waitUntil(lambda: back.failed, timeout=WAIT_MS)
+    assert back.renderer is not None and not front.failed
+    capture.new_card()
+    capture.discard_card("")
+    qtbot.waitUntil(lambda: not back.failed, timeout=WAIT_MS)
+
+
+def test_phone_width_narrows_the_card_and_tall_cards_scroll(qtbot: QtBot, window: MainWindow) -> None:
+    preview = window.capture.preview
+    canvas = preview.canvas
+    settle(window)
+    wide = canvas.frame_rect().width()
+    preview.phone_toggle.setChecked(True)
+    assert canvas.frame_rect().width() == 360 + 2 * 24 < wide
+    short = canvas.minimumHeight()
+    type_card(window, "Real Analysis", "front", " \\\n".join(f"line {number}" for number in range(60)))
+    qtbot.waitUntil(lambda: canvas.minimumHeight() > preview.scroll_area.viewport().height(), timeout=WAIT_MS)
+    assert canvas.minimumHeight() > short

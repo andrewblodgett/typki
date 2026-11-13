@@ -4,7 +4,7 @@ from typki.domain.card import CardDraft
 from typki.library.drafts import read_draft, write_draft
 
 
-class Outbox:
+class DraftFolder:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
 

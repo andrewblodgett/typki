@@ -20,7 +20,7 @@ from typki.ui.background import CoalescingTask, TaskRunner, debouncer
 from typki.ui.editor import TypstEditor
 from typki.ui.editor_field import EditorField
 from typki.ui.layout import page, panel, row, splitter
-from typki.ui.preview import CardPreview
+from typki.ui.preview import BACK, FRONT, CardPreview
 from typki.ui.save_queue import NOT_SAVED, SaveQueue
 from typki.ui.tags_edit import TagsEdit
 from typki.ui.theme import Theme
@@ -32,10 +32,12 @@ DECK_WIDTH = 220
 TEMPLATE_WIDTH = 160
 SAVE_STATUS_WIDTH = 260
 DEFAULT_DECK = "Default"
-FRONT = "front"
-BACK = "back"
 
 Snapshot = tuple[str, tuple[str, ...], str, str]
+
+
+def snapshot_of(draft: CardDraft) -> Snapshot:
+    return (draft.deck_name, draft.tags, draft.front, draft.back)
 
 
 class DeckComboBox(QComboBox):
@@ -91,7 +93,9 @@ class CapturePage(QWidget):
         self.header_text = service.library.read_header()
         self.templates: tuple[Template, ...] = templates_from_header(self.header_text)
         self.saved_snapshot: Snapshot | None = None
+        self.rendering_sources: tuple[str, str] | None = None
         self.last_render_ok = False
+        self.leave_action: Callable[[], None] | None = None
         self.restoring = False
 
         self.deck_combo = DeckComboBox()
@@ -139,6 +143,7 @@ class CapturePage(QWidget):
         self.save_state_changed.connect(self.refresh_save_status)
         save_queue.state_changed.connect(self.refresh_save_status)
         save_queue.saved.connect(self.on_saved)
+        save_queue.rejected.connect(self.on_save_rejected)
 
     def fill_template_combo(self) -> None:
         current = self.template_combo.currentData()
@@ -172,17 +177,19 @@ class CapturePage(QWidget):
         )
 
     def snapshot(self) -> Snapshot:
-        draft = self.current_draft()
-        return (draft.deck_name, draft.tags, draft.front, draft.back)
+        return snapshot_of(self.current_draft())
+
+    def sources(self) -> tuple[str, str]:
+        return self.front_editor.toPlainText(), self.back_editor.toPlainText()
 
     def missing_content(self) -> str | None:
-        return missing_content(self.front_editor.toPlainText(), self.back_editor.toPlainText())
+        return missing_content(*self.sources())
 
     def is_savable(self) -> bool:
         return self.missing_content() is None and self.snapshot() != self.saved_snapshot
 
     def can_leave_card(self) -> bool:
-        front, back = self.front_editor.toPlainText(), self.back_editor.toPlainText()
+        front, back = self.sources()
         missing = missing_content(front, back)
         if missing is None or not (front.strip() or back.strip()) or self.snapshot() == self.saved_snapshot:
             return True
@@ -217,6 +224,7 @@ class CapturePage(QWidget):
             self.restoring = False
 
     def show_draft(self, draft: CardDraft, saved: bool) -> None:
+        self.leave_action = None
         with self.loading_fields():
             self.deck_combo.setCurrentText(draft.deck_name)
             self.select_template_key(draft.template_name)
@@ -241,10 +249,21 @@ class CapturePage(QWidget):
         self.template_combo.setCurrentIndex(max(index, 0))
 
     def new_card(self) -> None:
+        self.leave_card_then(lambda: self.start_new_card(self.template_key()))
+
+    def leave_card_then(self, action: Callable[[], None]) -> None:
         if not self.can_leave_card():
             return
+        if self.last_render_ok or not self.is_savable():
+            self.finish_leaving(action)
+            return
+        self.leave_action = action
+        self.render_timer.stop()
+        self.request_render()
+
+    def finish_leaving(self, action: Callable[[], None]) -> None:
         self.flush()
-        self.start_new_card(self.template_key())
+        action()
 
     def discard_card(self, template_name: str) -> None:
         self.autosave_timer.stop()
@@ -256,10 +275,15 @@ class CapturePage(QWidget):
         self.show_draft(CardDraft(self.deck_name(), template.name, tags, template.front, ""), saved=True)
 
     def load_card(self, card: StoredCard) -> None:
-        if not self.can_leave_card():
-            return
-        self.flush()
-        self.show_draft(card.as_draft(template_for_tags(card.tags, self.templates).name), saved=True)
+        draft = card.as_draft(template_for_tags(card.tags, self.templates).name)
+        self.leave_card_then(lambda: self.show_draft(draft, saved=True))
+
+    def reopen_unsaved(self, draft: CardDraft, on_shown: Callable[[], None]) -> None:
+        def show() -> None:
+            self.show_draft(draft, saved=False)
+            on_shown()
+
+        self.leave_card_then(show)
 
     def discard_if_showing(self, note_id: int) -> None:
         if self.note_id == note_id:
@@ -295,6 +319,10 @@ class CapturePage(QWidget):
         if self.is_savable():
             self.autosave()
 
+    def on_save_rejected(self, draft: CardDraft) -> None:
+        if draft.source_id == self.source_id and snapshot_of(draft) == self.saved_snapshot:
+            self.saved_snapshot = None
+
     def on_saved(self, source_id: str, result: SaveResult) -> None:
         if source_id == self.source_id:
             self.note_id = result.note_id
@@ -308,7 +336,7 @@ class CapturePage(QWidget):
         self.render_task.request()
 
     def render_job(self) -> Callable[[], CardRender]:
-        front, back = self.front_editor.toPlainText(), self.back_editor.toPlainText()
+        front, back = self.rendering_sources = self.sources()
         return lambda: self.service.render(front, back)
 
     def on_rendered(self, card_render: CardRender) -> None:
@@ -316,10 +344,19 @@ class CapturePage(QWidget):
         for side, side_render, field in sides:
             self.preview.set_side(side, side_render.svg, not side_render.ok)
             field.show_diagnostics(list(side_render.diagnostics))
+        if self.rendering_sources != self.sources():
+            return  # the text changed while this compiled, and a render of the new text is on its way
         self.last_render_ok = card_render.ok
-        self.schedule_autosave()
+        leave_action, self.leave_action = self.leave_action, None
+        if leave_action is None:
+            self.schedule_autosave()
+        elif card_render.ok:
+            self.finish_leaving(leave_action)
+        else:
+            (self.back_field if card_render.front.ok else self.front_field).editor.setFocus()
 
     def on_render_crashed(self, error: Exception) -> None:
+        self.leave_action = None
         self.front_field.show_problem(str(error))
 
     def set_theme(self, theme: Theme) -> None:

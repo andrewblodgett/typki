@@ -6,7 +6,7 @@ from typki.library.store import Library
 from typki.render.compiler import Renderer
 from typki.render.diagnostics import parse_diagnostics
 from typki.render.plain_text import plain_text_from_source
-from typki.render.svg_postprocess import postprocess_svg
+from typki.render.svg_postprocess import postprocess_svg, svg_for_display
 
 MINIMAL_SVG = (
     b'<svg viewBox="0 0 100 50" width="100pt" height="50pt" xmlns="http://www.w3.org/2000/svg">'
@@ -112,3 +112,11 @@ def test_new_fonts_rebuild_the_compiler(library: Library, renderer: Renderer) ->
     first = renderer.compiler_for(preamble.font_fingerprint)
     assert renderer.compiler_for(preamble.font_fingerprint) is first
     assert renderer.compiler_for("different-fonts") is not first
+
+
+def test_display_svg_takes_the_theme_color_and_splits_out_alpha(library: Library, renderer: Renderer) -> None:
+    side = renderer.render_side("plain #highlight[marked]", deck_preamble(library))
+    assert side.svg is not None and 'fill="#fffd11a1"' in side.svg
+    shown = svg_for_display(side.svg, "#d3c6aa")
+    assert 'fill="#fffd11" fill-opacity="0.631"' in shown
+    assert 'fill="#d3c6aa"' in shown and "currentColor" not in shown

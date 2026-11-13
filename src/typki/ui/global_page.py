@@ -8,7 +8,7 @@ from typki.ui.background import CoalescingTask, TaskRunner, debouncer
 from typki.ui.editor import TypstEditor
 from typki.ui.editor_field import EditorField
 from typki.ui.layout import page, splitter
-from typki.ui.preview import CardPreview
+from typki.ui.preview import BACK, FRONT, CardPreview
 from typki.ui.theme import Theme
 
 WRITE_DEBOUNCE_MS = 250
@@ -88,8 +88,8 @@ class GlobalPage(QWidget):
         return lambda: self.service.render(front, back)
 
     def on_rendered(self, card_render: CardRender) -> None:
-        self.preview.set_side("front", card_render.front.svg, not card_render.front.ok)
-        self.preview.set_side("back", card_render.back.svg, not card_render.back.ok)
+        self.preview.set_side(FRONT, card_render.front.svg, not card_render.front.ok)
+        self.preview.set_side(BACK, card_render.back.svg, not card_render.back.ok)
         diagnostics = list(card_render.front.diagnostics)
         diagnostics += [d for d in card_render.back.diagnostics if d not in diagnostics]
         self.show_diagnostics(diagnostics)
