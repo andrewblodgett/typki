@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
 
 from conftest import replace_defn
 from PySide6.QtCore import Qt
@@ -833,3 +832,41 @@ def test_background_task_that_crashes_still_reports_back(qtbot: QtBot) -> None:
     runner.run(crash, lambda _result: None)
     qtbot.waitUntil(lambda: bool(errors), timeout=WAIT_MS)
     assert "compiler blew up" in str(errors[0])
+
+
+def test_preview_draws_the_card_and_dims_a_side_that_stops_compiling(
+    qtbot: QtBot, window: MainWindow
+) -> None:
+    capture = window.capture
+    canvas = capture.preview.canvas
+    front, back = canvas.sides["front"], canvas.sides["back"]
+    type_card(window, "Real Analysis", "the front", "$ x^2 $")
+    qtbot.waitUntil(lambda: capture.last_render_ok, timeout=WAIT_MS)
+    assert front.renderer is not None and back.renderer is not None
+    frame = canvas.frame_rect().toRect()
+    image = canvas.grab().toImage()
+    colors = {
+        image.pixelColor(x, y).name() for x in range(frame.left(), frame.right()) for y in range(30, 50)
+    }
+    assert image.pixelColor(frame.left() + 12, frame.top() + 12).name() == canvas.theme.panel
+    assert image.pixelColor(1, frame.bottom() + 8).name() == canvas.theme.chrome
+    assert colors - {canvas.theme.panel}, "the front should leave ink inside the frame"
+    capture.back_editor.setPlainText("#nosuchthing")
+    qtbot.waitUntil(lambda: back.failed, timeout=WAIT_MS)
+    assert back.renderer is not None and not front.failed
+    capture.new_card()
+    capture.discard_card("")
+    qtbot.waitUntil(lambda: not back.failed, timeout=WAIT_MS)
+
+
+def test_phone_width_narrows_the_card_and_tall_cards_scroll(qtbot: QtBot, window: MainWindow) -> None:
+    preview = window.capture.preview
+    canvas = preview.canvas
+    settle(window)
+    wide = canvas.frame_rect().width()
+    preview.phone_toggle.setChecked(True)
+    assert canvas.frame_rect().width() == 360 + 2 * 24 < wide
+    short = canvas.minimumHeight()
+    type_card(window, "Real Analysis", "front", " \\\n".join(f"line {number}" for number in range(60)))
+    qtbot.waitUntil(lambda: canvas.minimumHeight() > preview.scroll_area.viewport().height(), timeout=WAIT_MS)
+    assert canvas.minimumHeight() > short

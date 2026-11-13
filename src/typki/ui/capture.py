@@ -20,7 +20,7 @@ from typki.ui.background import CoalescingTask, TaskRunner, debouncer
 from typki.ui.editor import TypstEditor
 from typki.ui.editor_field import EditorField
 from typki.ui.layout import page, panel, row, splitter
-from typki.ui.preview import CardPreview
+from typki.ui.preview import BACK, FRONT, CardPreview
 from typki.ui.save_queue import NOT_SAVED, SaveQueue
 from typki.ui.tags_edit import TagsEdit
 from typki.ui.theme import Theme
@@ -32,8 +32,6 @@ DECK_WIDTH = 220
 TEMPLATE_WIDTH = 160
 SAVE_STATUS_WIDTH = 260
 DEFAULT_DECK = "Default"
-FRONT = "front"
-BACK = "back"
 
 Snapshot = tuple[str, tuple[str, ...], str, str]
 
