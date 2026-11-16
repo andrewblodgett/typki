@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from typki.domain.preamble import CARD_PAGE_SETUP_LINES
+
 Severity = Literal["error", "warning"]
 
 IN_MEMORY_MAIN_SUFFIX = "__typst_py_bytes__.typ"
@@ -56,7 +58,7 @@ def parse_diagnostics(
     text: str,
     fallback_message: str,
     severity: Severity,
-    header_line_count: int,
+    preamble_line_count: int,
     library_root: Path,
 ) -> list[Diagnostic]:
     blocks: list[RawBlock] = []
@@ -80,18 +82,19 @@ def parse_diagnostics(
             current.hints.append(hint.group(1))
     if not blocks:
         return [Diagnostic(severity=severity, message=fallback_message)]
-    return [to_diagnostic(block, header_line_count, library_root) for block in blocks]
+    return [to_diagnostic(block, preamble_line_count, library_root) for block in blocks]
 
 
-def to_diagnostic(block: RawBlock, header_line_count: int, library_root: Path) -> Diagnostic:
+def to_diagnostic(block: RawBlock, preamble_line_count: int, library_root: Path) -> Diagnostic:
     hints = tuple(block.hints)
     if block.path is None or block.line is None:
         return Diagnostic(block.severity, block.message, hints)
     if block.path.endswith(IN_MEMORY_MAIN_SUFFIX):
-        card_line = block.line - header_line_count
+        card_line = block.line - preamble_line_count
         if card_line < 1:
+            header_line = max(block.line - CARD_PAGE_SETUP_LINES, 1)
             return Diagnostic(
-                block.severity, block.message, hints, HEADER_FILE_LABEL, block.line, block.column
+                block.severity, block.message, hints, HEADER_FILE_LABEL, header_line, block.column
             )
         return Diagnostic(block.severity, block.message, hints, None, card_line, block.column)
     return Diagnostic(

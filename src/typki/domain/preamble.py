@@ -1,11 +1,17 @@
 import hashlib
 from dataclasses import dataclass
 
-PREAMBLE_FORMAT_VERSION = 3
+PREAMBLE_FORMAT_VERSION = 4
 HEADER_FILENAME = "header.typ"
 
-DEFAULT_HEADER = """#set page(width: auto, height: auto, margin: 6pt, fill: none)
-#set text(font: "New Computer Modern", size: 16pt)
+# Compiled ahead of the header, so a header without its own page setup still gives a card-sized,
+# transparent page instead of Typst's default: a white sheet of A4.
+CARD_PAGE_SETUP = "#set page(width: auto, height: auto, margin: 6pt, fill: none)\n"
+CARD_PAGE_SETUP_LINES = CARD_PAGE_SETUP.count("\n")
+
+DEFAULT_HEADER = (
+    CARD_PAGE_SETUP
+    + """#set text(font: "New Computer Modern", size: 16pt)
 
 #show math.equation.where(block: true): equation => layout(region => {
   let width = measure(equation).width
@@ -20,6 +26,7 @@ DEFAULT_HEADER = """#set page(width: auto, height: auto, margin: 6pt, fill: none
 #let Definition(term, body) = [*Definition* (#term). #body]
 #let Theorem(name, statement) = [*Theorem* (#name). #emph(statement)]
 """
+)
 
 
 @dataclass(frozen=True)
@@ -30,10 +37,10 @@ class Preamble:
 
     @property
     def line_count(self) -> int:
-        return self.header.count("\n")
+        return CARD_PAGE_SETUP_LINES + self.header.count("\n")
 
     def wrap(self, card_source: str) -> str:
-        return self.header + card_source
+        return CARD_PAGE_SETUP + self.header + card_source
 
 
 def normalized_header(header_text: str) -> str:

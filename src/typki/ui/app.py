@@ -3,13 +3,14 @@ import sys
 from contextlib import ExitStack
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QStandardPaths
+from PySide6.QtCore import QCoreApplication, QSettings, QStandardPaths
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from typki.anki.ankiconnect import DEFAULT_URL, AnkiConnectGateway
 from typki.anki.fake_anki import running_fake_ankiconnect
 from typki.card_service import CardService
+from typki.diagnose import diagnostic_report
 from typki.launcher import APP_ID, ICON_PATH, ensure_launcher, install_launcher, user_data_dir
 from typki.library.store import Library
 from typki.render.compiler import Renderer
@@ -33,6 +34,9 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--install-launcher", action="store_true", help="add Typki to your desktop's app launcher"
     )
+    parser.add_argument(
+        "--diagnose", action="store_true", help="print the header and how recent cards are stored in Anki"
+    )
     return parser.parse_args(argv)
 
 
@@ -54,6 +58,12 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.install_launcher:
         for path in install_launcher(executable, user_data_dir()):
             print(f"Wrote {path}")
+        return 0
+    if arguments.diagnose:
+        QCoreApplication.setOrganizationName(APP_NAME)
+        QCoreApplication.setApplicationName(APP_NAME)
+        library = Library(resolve_library_path(QSettings(), arguments.library))
+        print(diagnostic_report(library, AnkiConnectGateway(arguments.anki_url)))
         return 0
     try:
         ensure_launcher(executable, user_data_dir())
