@@ -7,6 +7,7 @@ from typki.anki.ankiconnect import AnkiConnectGateway, was_never_sent
 from typki.anki.fake_anki import FakeAnki
 from typki.anki.gateway import AnkiError, DuplicateNoteError, NotAnkiConnectError
 from typki.card_service import CardService, NotTypkiNoteError, RenderFailedError
+from typki.diagnose import diagnostic_report
 from typki.domain.card import CardDraft
 
 DECK = "Real Analysis"
@@ -229,3 +230,21 @@ def test_only_refused_connections_are_retried() -> None:
     assert not was_never_sent(urllib.error.URLError(TimeoutError()))
     assert not was_never_sent(TimeoutError())
     assert not was_never_sent(ConnectionResetError())
+
+
+def test_diagnostic_report_shows_the_header_and_how_cards_are_stored(
+    service: CardService, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    gateway, fake = fake_ankiconnect
+    note_id = service.save(make_draft(front="plain card")).note_id
+    fake.notes[note_id].fields[note_type.FRONT] = (
+        '<svg viewBox="0 0 595.276 841.89"><path fill="#ffffff"/></svg>'
+    )
+    report = diagnostic_report(service.library, gateway)
+    assert "#let RRR = $bb(R)$" in report
+    assert "stored in Anki: 595x842pt, white fill: True" in report
+    recompiled = next(line for line in report.splitlines() if line.startswith("  compiled now:"))
+    assert "white fill: False" in recompiled and "errors: []" in recompiled
+    assert "not reachable" in diagnostic_report(service.library, AnkiConnectGateway("http://127.0.0.1:9"))
+    service.library.header_path.unlink()
+    assert "header.typ is MISSING" in diagnostic_report(service.library, gateway)
