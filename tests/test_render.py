@@ -120,3 +120,36 @@ def test_display_svg_takes_the_theme_color_and_splits_out_alpha(library: Library
     shown = svg_for_display(side.svg, "#d3c6aa")
     assert 'fill="#fffd11" fill-opacity="0.631"' in shown
     assert 'fill="#d3c6aa"' in shown and "currentColor" not in shown
+
+
+def page_size_and_fills(svg: str | None) -> tuple[float, float, set[str]]:
+    assert svg is not None
+    root = re.match(r'<svg viewBox="0 0 ([\d.]+) ([\d.]+)"', svg)
+    assert root is not None
+    return float(root[1]), float(root[2]), set(re.findall(r'fill="(#[0-9a-f]+)"', svg))
+
+
+def test_header_without_page_setup_still_gives_a_card_sized_transparent_page(
+    library: Library, renderer: Renderer
+) -> None:
+    for header in ("", "#set text(size: 9pt)\n", "// #set page(width: auto, height: auto, fill: none)\n"):
+        library.write_header(header)
+        width, height, fills = page_size_and_fills(renderer.render_side("Short.", library.preamble()).svg)
+        assert width < 100 and height < 40, header
+        assert "#ffffff" not in fills, header
+
+
+def test_header_page_setup_overrides_the_built_in_one(library: Library, renderer: Renderer) -> None:
+    library.write_header("#set page(width: 300pt, margin: 20pt, fill: white)\n")
+    width, height, fills = page_size_and_fills(renderer.render_side("Short.", library.preamble()).svg)
+    assert width == 300 and height > 40
+    assert "#ffffff" in fills
+
+
+def test_header_errors_keep_their_own_line_numbers(library: Library, renderer: Renderer) -> None:
+    library.write_header("#let fine = 1\n#let broken = nosuchthing\n")
+    (diagnostic,) = renderer.render_side("card", library.preamble()).errors
+    assert (diagnostic.file, diagnostic.line) == ("header.typ", 2)
+    library.write_header("#let fine = 1\n")
+    (diagnostic,) = renderer.render_side("first\n#nosuchthing", library.preamble()).errors
+    assert (diagnostic.file, diagnostic.line) == (None, 2)

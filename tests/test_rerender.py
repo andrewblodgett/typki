@@ -1,5 +1,6 @@
 import threading
 
+import pytest
 from conftest import replace_defn
 
 from typki.anki.ankiconnect import AnkiConnectGateway
@@ -7,6 +8,7 @@ from typki.anki.fake_anki import FakeAnki
 from typki.anki.search import escape_search_text
 from typki.card_service import CardService
 from typki.domain.card import CardDraft
+from typki.library.store import HeaderMissingError
 from typki.rerender.runner import Rerenderer, RerenderProgress
 
 DECK = "Real Analysis"
@@ -109,3 +111,37 @@ def test_fields_written_by_rerender_match_fresh_save(service: CardService) -> No
     fresh = service.render(opened.front_source, opened.back_source)
     assert not service.is_stale(opened, service.library.preamble())
     assert (opened.front_svg, opened.back_svg) == (fresh.front.svg, fresh.back.svg)
+
+
+def test_missing_header_never_rewrites_cards(
+    service: CardService, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    _, fake = fake_ankiconnect
+    note_ids = add_cards(service, 3)
+    before = {note_id: dict(fake.notes[note_id].fields) for note_id in note_ids}
+    service.library.header_path.unlink()
+    rerenderer = Rerenderer(service)
+    with pytest.raises(HeaderMissingError):
+        rerenderer.staleness()
+    with pytest.raises(HeaderMissingError):
+        rerenderer.run(tuple(note_ids), apply=True)
+    with pytest.raises(HeaderMissingError):
+        service.save(CardDraft(DECK, "", (), "new card", "back"))
+    assert {note_id: dict(note.fields) for note_id, note in fake.notes.items()} == before
+
+
+def test_cards_whitened_by_a_header_without_page_setup_are_repaired(
+    service: CardService, fake_ankiconnect: tuple[AnkiConnectGateway, FakeAnki]
+) -> None:
+    _, fake = fake_ankiconnect
+    note_id = service.save(CardDraft(DECK, "", (), "plain card", "back")).note_id
+    full_page = (
+        '<svg viewBox="0 0 595.276 841.89" width="595.276pt" height="841.89pt"><path fill="#ffffff"/></svg>'
+    )
+    fake.notes[note_id].fields.update(Front=full_page, Back=full_page, PreambleHash="made-without-page-setup")
+    rerenderer = Rerenderer(service)
+    stale = rerenderer.staleness().stale_note_ids
+    assert stale == (note_id,)
+    rerenderer.run(stale, apply=True)
+    front = fake.notes[note_id].fields["Front"]
+    assert 'fill="#ffffff"' not in front and 'width="595' not in front

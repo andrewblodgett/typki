@@ -1,5 +1,5 @@
 from typki.domain.card import missing_content, parse_tags
-from typki.domain.preamble import DEFAULT_HEADER, build_preamble
+from typki.domain.preamble import CARD_PAGE_SETUP, DEFAULT_HEADER, build_preamble
 from typki.domain.staleness import is_stale
 from typki.domain.template import (
     BLANK,
@@ -14,8 +14,8 @@ from typki.domain.template import (
 def test_preamble_header_ends_with_newline_and_counts_lines() -> None:
     preamble = build_preamble("#set text(size: 12pt)", "")
     assert preamble.header == "#set text(size: 12pt)\n"
-    assert preamble.line_count == 1
-    assert preamble.wrap("card") == "#set text(size: 12pt)\ncard"
+    assert preamble.line_count == 2
+    assert preamble.wrap("card") == CARD_PAGE_SETUP + "#set text(size: 12pt)\ncard"
 
 
 def test_preamble_hash_changes_with_header_and_fonts() -> None:

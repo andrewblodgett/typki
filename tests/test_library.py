@@ -1,11 +1,13 @@
 from pathlib import Path
 
+import pytest
+
 from typki.domain.card import CardDraft
 from typki.domain.preamble import DEFAULT_HEADER
 from typki.launcher import APP_ID, ensure_launcher, install_launcher, launcher_paths
 from typki.library.draft_folder import DraftFolder
 from typki.library.drafts import DraftStore
-from typki.library.store import Library
+from typki.library.store import HeaderMissingError, Library
 
 
 def test_new_library_gets_default_header(tmp_path: Path) -> None:
@@ -86,3 +88,12 @@ def test_launcher_is_not_created_for_other_programs(tmp_path: Path) -> None:
     python.write_text("")
     ensure_launcher(python, tmp_path / "share")
     assert not launcher_paths(tmp_path / "share")[0].exists()
+
+
+def test_missing_header_file_is_an_error_not_an_empty_header(tmp_path: Path) -> None:
+    library = Library(tmp_path / "library")
+    library.ensure_layout()
+    library.header_path.unlink()
+    assert library.read_header() == ""
+    with pytest.raises(HeaderMissingError):
+        library.preamble()

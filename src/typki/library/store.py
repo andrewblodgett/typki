@@ -11,6 +11,10 @@ SETTINGS_FILENAME = "settings.toml"
 FONT_SUFFIXES = {".ttf", ".otf", ".ttc", ".otc"}
 
 
+class HeaderMissingError(Exception):
+    pass
+
+
 def write_text_atomically(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}-")
@@ -49,6 +53,9 @@ class Library:
         write_text_atomically(self.header_path, text)
 
     def preamble(self) -> Preamble:
+        if not self.header_path.is_file():
+            # Rendering without the header would quietly restyle every card it touches.
+            raise HeaderMissingError(f"{self.header_path} is missing, so cards cannot be rendered")
         return build_preamble(self.read_header(), self.font_fingerprint())
 
     def font_files(self) -> list[Path]:
