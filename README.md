@@ -19,7 +19,7 @@ curl -LsSf https://raw.githubusercontent.com/andrewblodgett/typki/main/install.s
 
 This installs [uv](https://docs.astral.sh/uv/) if you don't have it (uv also fetches the Python version Typki needs), installs Typki, and adds it to your app launcher. Open Typki from the launcher like any other app, or run `typki` in a terminal.
 
-To update, run `uv tool upgrade typki`. To uninstall, run `uv tool uninstall typki` and delete `~/.local/share/applications/typki.desktop`.
+To update, run the install command again. To uninstall, run `uv tool uninstall typki` and delete `~/.local/share/applications/typki.desktop`.
 
 If you already have uv, `uv tool install git+https://github.com/andrewblodgett/typki` does the same thing; Typki adds itself to the launcher the first time you run it.
 
@@ -39,11 +39,13 @@ Run `typki` once to add it to your launcher. An editable install runs the code i
 
 **Your library.** Typki keeps its files in `~/typki-library`:
 
-- `header.typ` is the Typst header added to every card: page setup, fonts, and your own macros. Edit it in the **Global** tab. When you leave that tab, your existing cards are re-rendered with the new header in the background.
+- `header.typ` is the Typst header added to every card: page setup, fonts, and your own macros. Cards are sized to their content on a transparent page unless the header's own `#set page` says otherwise. Edit it in the **Global** tab. When you leave that tab, your existing cards are re-rendered with the new header in the background.
 - `fonts/` is for extra fonts your cards use.
 
 To keep the library somewhere else (for example a synced folder), run `typki --library /path/to/folder` once; Typki remembers it.
 
 **Templates.** Any function in the header whose name starts with a capital letter, like `#let Theorem(name, statement) = ...`, shows up in the template menu. Lowercase functions stay plain helpers.
+
+**If cards look wrong.** `typki --diagnose` prints your header and how your most recent cards are stored in Anki, which is the first thing to look at (and to paste into a bug report).
 
 **Trying it without Anki.** `typki --fake-anki` runs against a temporary in-memory Anki, so you can try everything without touching your real collection.
