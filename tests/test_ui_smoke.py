@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from conftest import replace_defn
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QKeySequence, QTextCursor
 from PySide6.QtWidgets import QApplication, QListWidgetItem
 from pytestqt.qtbot import QtBot
 
@@ -576,6 +576,15 @@ def test_editor_line_shortcuts(qtbot: QtBot, editor: TypstEditor) -> None:
         editor, Qt.Key.Key_K, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
     )
     assert editor.toPlainText() == "second"
+
+
+def test_emacs_style_deletions_are_switched_off(qtbot: QtBot, editor: TypstEditor) -> None:
+    editor.setPlainText("#set page(fill: none)\nsecond")
+    editor.moveCursor(QTextCursor.MoveOperation.Start)
+    for key in (Qt.Key.Key_K, Qt.Key.Key_U):
+        assert QKeySequence(Qt.KeyboardModifier.ControlModifier | key).toString() in editor.key_handlers
+        qtbot.keyClick(editor, key, Qt.KeyboardModifier.ControlModifier)
+    assert editor.toPlainText() == "#set page(fill: none)\nsecond"
 
 
 def test_matching_bracket_is_highlighted(editor: TypstEditor) -> None:

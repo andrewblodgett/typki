@@ -105,6 +105,10 @@ def placeholder_format_for(theme: Theme) -> QTextCharFormat:
     return text_format
 
 
+# On Linux, Qt gives text boxes Emacs-style "delete to end of line" and "delete line" on these keys.
+# The editor documents neither, and Ctrl+K is one slip away from Ctrl+Shift+K.
+DISABLED_QT_SHORTCUTS = ("Ctrl+K", "Ctrl+U")
+
 BlockSpan = tuple[int, int, QTextCharFormat]
 LineCommand = Callable[[str, int, int], Edit | None]
 LINE_COMMANDS: dict[str, LineCommand] = {
@@ -299,6 +303,7 @@ class TypstEditor(QPlainTextEdit):
             "Home": partial(self.smart_home, extend=False),
             "Shift+Home": partial(self.smart_home, extend=True),
         }
+        handlers |= dict.fromkeys(DISABLED_QT_SHORTCUTS, do_nothing)
         self.key_handlers = {key_name(sequence): handler for sequence, handler in handlers.items()}
         self.cursorPositionChanged.connect(self.highlight_matching_brackets)
 
@@ -520,6 +525,10 @@ class TypstEditor(QPlainTextEdit):
     def jump_to(self, line: int, column: int) -> None:
         self.setTextCursor(self.cursor_at(line, column))
         self.setFocus()
+
+
+def do_nothing() -> None:
+    pass
 
 
 def key_name(sequence: QKeySequence | str) -> str:
